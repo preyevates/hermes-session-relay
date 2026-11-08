@@ -4,7 +4,10 @@
  * What it does (automatic hand-off to a new session when the context fills up):
  *  1. Watches how full the focused session's context window is.
  *  2. When usage crosses the threshold and the turn has finished, it submits a
- *     hidden service message: the agent replies with the hand-off note itself.
+ *     hidden service message: the agent writes the hand-off with the
+ *     `hermes-optimize-handoff` skill (its template, then its check until it
+ *     passes) and replies with the prompt the check printed. That prompt is
+ *     the note.
  *  3. The plugin opens the new chat through the SDK — host.newChat() — and
  *     submits the note into it (host.composer.submit('new', note)), so the
  *     fresh session starts with the hand-off as its first user message. The new
@@ -31,7 +34,23 @@ import { useEffect } from 'react'
 const ID = 'session-relay'
 const TITLE_LIMIT = 40
 const DEFAULTS = { auto: true, threshold: 45 }
-const NOTE_TIMEOUT_MS = 300000
+// Writing the hand-off, committing its records and passing its check takes tool calls.
+const NOTE_TIMEOUT_MS = 1200000
+// The agent's reply when it could not produce a hand-off: shown, never seeded.
+const NO_HANDOFF = 'Session Relay: no hand-off'
+const HANDOFF_SKILL = 'hermes-optimize-handoff'
+
+/** The hidden service message that asks for the hand-off. */
+function handoffRequest(pct) {
+  return [
+    '[Session Relay plugin — service message]',
+    'Context usage in this session: ' + (pct == null ? '—' : pct + '%') + '.',
+    'Hand this work to a fresh session now. Do not start or continue any other work.',
+    'Load the skill `' + HANDOFF_SKILL + '` and follow its Procedure: put the lasting results in their homes, write the hand-off from its template, and run its `check` until it exits 0.',
+    'Your WHOLE reply is the `prompt` the check printed, exactly as printed: no code block around it, nothing before or after it. The plugin opens the new chat itself and sends your reply there as its first message.',
+    'If the check cannot pass, reply with one line that starts "' + NO_HANDOFF + ':" and names what stops it; no new chat is opened.'
+  ].join('\n')
+}
 const SEED_TRIES = 40
 const SEED_RETRY_MS = 500
 // The streamed usage the desktop keeps for the primary chat carries no
@@ -55,6 +74,13 @@ function nextTitle(raw) {
     out = m[1] + num + m[3]
   }
   return out.length > TITLE_LIMIT ? out.slice(0, TITLE_LIMIT) : out
+}
+
+/** The reply without one code block wrapped round the whole of it: the hand-off skill shows its prompt in one. */
+function unfence(reply) {
+  const t = String(reply || '').trim()
+  const m = t.match(/^```[^\n]*\n([\s\S]*?)\n```$/)
+  return m ? m[1].trim() : t
 }
 
 /** First words of a hand-off note, whitespace collapsed: the new chat's list preview starts with them. */
@@ -370,13 +396,7 @@ export default {
         }
 
         const newTitle = nextTitle(oldTitle)
-        const msg = [
-          '[Session Relay plugin — service message]',
-          'Context usage in this session: ' + (pct == null ? '—' : pct + '%') + '.',
-          'Write the hand-off note that will continue this work in a fresh session.',
-          'Reply with the note itself as your WHOLE message: the current task, the state, what has been done, the next step, and the important details from this conversation.',
-          'No tools, no preamble, no questions: the plugin opens the new chat itself and puts your reply there as its first message.'
-        ].join('\n')
+        const msg = handoffRequest(pct)
 
         awaiting = { runtimeId, storedId, newTitle }
         await host.request('prompt.submit', { session_id: runtimeId, text: msg, display_kind: 'hidden' })
@@ -420,8 +440,14 @@ export default {
       if (payload.status && payload.status !== 'complete') {
         return
       }
-      const note = String(payload.text || payload.content || '').trim()
+      const note = unfence(payload.text || payload.content || '')
       if (!note) {
+        return
+      }
+      if (note.startsWith(NO_HANDOFF)) {
+        awaiting = null
+        $relay.set({ phase: 'idle', title: '' })
+        host.notify({ kind: 'warning', message: note.split('\n')[0] })
         return
       }
       openAndSeed(note)

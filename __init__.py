@@ -78,7 +78,7 @@ _AUTO_DEFAULTS = {
 # fire the same relay twice.
 _AUTO_STATE_FILE = "auto_state.json"
 _AUTO_STATE_MAX_AGE_S = 24 * 3600
-_AUTO_TRIGGER_TIMEOUT_S = 10 * 60  # the agent gets this long to write the note
+_AUTO_TRIGGER_TIMEOUT_S = 20 * 60  # the agent gets this long to write the hand-off and pass its check
 _AUTO_CANCEL_COOLDOWN_S = 15 * 60  # after a cancel, leave this chat alone for this long
 _LOG_TAIL_BYTES = 3 * 1024 * 1024
 
@@ -88,26 +88,31 @@ _API_CALL_RE = re.compile(
 _TURN_RE = re.compile(
     r"agent\.turn_context: conversation turn: session=\S+ .*?platform=(?P<platform>\S+)")
 
+# Estate fork: every hand-off is written with this skill, whose check prints the prompt that
+# opens the next session. That prompt is the note.
+_HANDOFF_SKILL = "hermes-optimize-handoff"
+_HANDOFF_STEPS = (
+    "Hand this work to a fresh session now. Do not start or continue any other work.\n"
+    f"Load the skill `{_HANDOFF_SKILL}` and follow its Procedure: put the lasting results in their "
+    "homes, write the hand-off from its template, and run its `check` until it exits 0. "
+    "The note is the `prompt` the check printed, exactly as printed.\n"
+)
+
 _AUTO_TRIGGER_TEXT = (
     "[service: automatic context relay] This chat's context is about {pct:.0f}% full.\n"
-    "Write a short hand-off note for the next session: the current task, what has been done, what is "
-    "still open, the next step, and any detail that would otherwise be lost.\n"
-    "Store it with the `session_relay_handoff` tool (text=<the note>) and then reply to the user, in the "
-    "language of this conversation, with exactly one short line: "
-    "\"⚡ Context is almost full — hand-off saved, continuing in a fresh session.\"\n"
-    "Do not research anything and do not call any other tool."
+    + _HANDOFF_STEPS
+    + "Store the note with the `session_relay_handoff` tool (text=<the note>) and then reply to the "
+    "user, in the language of this conversation, with exactly one short line: "
+    "\"⚡ Context is almost full — hand-off saved, continuing in a fresh session.\""
 )
 
 _AUTO_WEB_TRIGGER_TEXT = (
     "[service: automatic context relay] This web session's context is about {pct:.0f}% full.\n"
-    "Write a short hand-off note for the next session: the current task, what has been done, what is "
-    "still open, the next step, and any detail that would otherwise be lost.\n"
-    "Put that note in your answer as ONE fenced block that opens with ```relay-web-auto and closes "
-    "with ``` — nothing else inside the block, and nothing but the block in the answer, in the "
-    "language of this conversation.\n"
+    + _HANDOFF_STEPS
+    + "Put the note in your answer as ONE fenced block that opens with ```relay-web-auto and closes "
+    "with ``` — nothing else inside the block, and nothing but the block in the answer.\n"
     "The web page moves itself to a fresh session and carries the block over; no reset is needed "
-    "on the server.\n"
-    "Do not research anything and do not call any tools."
+    "on the server."
 )
 
 _TOOL_SCHEMA = {
@@ -123,8 +128,9 @@ _TOOL_SCHEMA = {
             "text": {
                 "type": "string",
                 "description": (
-                    "The hand-off note itself: the current task, the state, what has been done, the "
-                    "next step, and the important details from this conversation."
+                    f"The hand-off note: first write the hand-off with the `{_HANDOFF_SKILL}` skill "
+                    "and run its `check` until it exits 0; the note is the `prompt` it printed, "
+                    "exactly as printed."
                 ),
             }
         },
