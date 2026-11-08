@@ -39,6 +39,9 @@ const NOTE_TIMEOUT_MS = 1200000
 // The agent's reply when it could not produce a hand-off: shown, never seeded.
 const NO_HANDOFF = 'Session Relay: no hand-off'
 const HANDOFF_SKILL = 'hermes-optimize-handoff'
+// After a cancelled or refused hand-off, the automatic relay leaves that chat alone this long
+// (the gateway half's _AUTO_CANCEL_COOLDOWN_S). The ⚡ button is never held back.
+const CANCEL_COOLDOWN_MS = 15 * 60000
 
 /** The hidden service message that asks for the hand-off. */
 function handoffRequest(pct) {
@@ -81,6 +84,25 @@ function unfence(reply) {
   const t = String(reply || '').trim()
   const m = t.match(/^```[^\n]*\n([\s\S]*?)\n```$/)
   return m ? m[1].trim() : t
+}
+
+/**
+ * What the reply to the hand-off request means. A turn that did not finish (he cancelled
+ * it, or it failed) ends the wait; an empty one is skipped; a refusal opens no chat.
+ */
+function noteOutcome(payload) {
+  const p = payload || {}
+  if (p.status && p.status !== 'complete') {
+    return { kind: 'cancelled', status: String(p.status) }
+  }
+  const note = unfence(p.text || p.content || '')
+  if (!note) {
+    return { kind: 'skip' }
+  }
+  if (note.startsWith(NO_HANDOFF)) {
+    return { kind: 'refused', note }
+  }
+  return { kind: 'note', note }
 }
 
 /** First words of a hand-off note, whitespace collapsed: the new chat's list preview starts with them. */
@@ -128,6 +150,16 @@ export default {
     // The relay whose hand-off note has not arrived yet:
     // { runtimeId, storedId, newTitle }.
     let awaiting = null
+    // storedId -> when its hand-off was cancelled, refused or never arrived.
+    const cancelledAt = new Map()
+
+    /** End the wait without opening a chat; the chat stays unmarked and pauses its automatic relay. */
+    const endWait = (storedId, kind, message) => {
+      awaiting = null
+      cancelledAt.set(storedId, Date.now())
+      $relay.set({ phase: 'idle', title: '' })
+      host.notify({ kind, message })
+    }
 
     console.log('[session-relay] loaded; threshold=' + prefs.get().threshold)
 
@@ -272,6 +304,8 @@ export default {
       const profile = profileAtom && profileAtom.get ? profileAtom.get() : ''
       try {
         host.newChat(profile || null)
+        // Marked only now, once the new chat has opened: a cancelled request leaves the chat unmarked.
+        markRelayed(a.storedId)
       } catch (e) {
         $relay.set({ phase: 'idle', title: '' })
         host.notifyError(e, 'Session relay: could not open a new chat.')
@@ -358,6 +392,9 @@ export default {
         if (Date.now() - lastFailAt < 300000) {
           return
         }
+        if (Date.now() - (cancelledAt.get(storedId) || 0) < CANCEL_COOLDOWN_MS) {
+          return
+        }
         const u = host.state.focusedUsage.get()
         const measured = $pct.get()
         const cheap =
@@ -400,7 +437,6 @@ export default {
 
         awaiting = { runtimeId, storedId, newTitle }
         await host.request('prompt.submit', { session_id: runtimeId, text: msg, display_kind: 'hidden' })
-        markRelayed(storedId)
         console.log('[session-relay] relay started; new title=' + (newTitle || '(auto)'))
         $relay.set({ phase: 'started', title: newTitle })
         host.notify({
@@ -410,9 +446,7 @@ export default {
         // A note that never arrives must not leave the chip spinning forever.
         ctx.setTimeout(() => {
           if (awaiting && awaiting.storedId === storedId) {
-            awaiting = null
-            $relay.set({ phase: 'idle', title: '' })
-            host.notify({ kind: 'warning', message: 'Session relay: no hand-off note arrived — press ⚡ to retry.' })
+            endWait(storedId, 'warning', 'Session relay: no hand-off note arrived — press ⚡ to retry.')
           }
         }, NOTE_TIMEOUT_MS)
       } catch (e) {
@@ -436,21 +470,23 @@ export default {
       if (sessionId !== a.runtimeId) {
         return
       }
-      const payload = event.payload || {}
-      if (payload.status && payload.status !== 'complete') {
+      const outcome = noteOutcome(event.payload)
+      if (outcome.kind === 'cancelled') {
+        endWait(
+          a.storedId,
+          'info',
+          'Session relay: hand-off cancelled. This chat still relays at the threshold; ⚡ starts one now.'
+        )
         return
       }
-      const note = unfence(payload.text || payload.content || '')
-      if (!note) {
+      if (outcome.kind === 'skip') {
         return
       }
-      if (note.startsWith(NO_HANDOFF)) {
-        awaiting = null
-        $relay.set({ phase: 'idle', title: '' })
-        host.notify({ kind: 'warning', message: note.split('\n')[0] })
+      if (outcome.kind === 'refused') {
+        endWait(a.storedId, 'warning', outcome.note.split('\n')[0])
         return
       }
-      openAndSeed(note)
+      openAndSeed(outcome.note)
     })
 
     function SettingsPage() {
@@ -502,6 +538,7 @@ export default {
               size: 'sm',
               onClick: () => {
                 ctx.storage.remove('relayed')
+                cancelledAt.clear()
                 host.notify({ kind: 'info', message: 'Session relay: marks cleared.' })
               },
               children: 'Reset'

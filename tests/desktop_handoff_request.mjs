@@ -47,7 +47,13 @@ const handoffRequest = new Function(
   'HANDOFF_SKILL',
   'return function handoffRequest' + lift('handoffRequest')
 )(NO_HANDOFF, HANDOFF_SKILL)
+// The lifted bodies are the plugin's own shipped source, as in desktop_find_fresh_session.mjs.
 const unfence = new Function('return function unfence' + lift('unfence'))()
+const noteOutcome = new Function(
+  'NO_HANDOFF',
+  'unfence',
+  'return function noteOutcome' + lift('noteOutcome')
+)(NO_HANDOFF, unfence)
 
 let passed = 0
 function check(name, fn) {
@@ -91,6 +97,35 @@ check('a plain reply, or one with a code block inside, is left as it is', () => 
 check('a failure reply is recognised by its opening words', () => {
   assert.ok((NO_HANDOFF + ': the check failed twice').startsWith(NO_HANDOFF))
   assert.ok(source.includes('note.startsWith(NO_HANDOFF)'))
+})
+
+check('a cancelled or failed turn ends the wait instead of being skipped', () => {
+  assert.equal(noteOutcome({ status: 'interrupted', text: 'Operation interrupted' }).kind, 'cancelled')
+  assert.equal(noteOutcome({ status: 'failed', text: '' }).kind, 'cancelled')
+})
+
+check('a finished reply is the note; an empty one is skipped; a refusal opens no chat', () => {
+  assert.deepEqual(noteOutcome({ status: 'complete', text: '```\nMode: build.\n```' }), { kind: 'note', note: 'Mode: build.' })
+  assert.deepEqual(noteOutcome({ text: 'Mode: build.' }), { kind: 'note', note: 'Mode: build.' })
+  assert.equal(noteOutcome({ status: 'complete', text: '  ' }).kind, 'skip')
+  assert.equal(noteOutcome(null).kind, 'skip')
+  assert.equal(noteOutcome({ status: 'complete', text: NO_HANDOFF + ': check failed' }).kind, 'refused')
+})
+
+check('a chat is marked relayed only once its new chat has opened, never when the request is sent', () => {
+  const submit = source.indexOf("host.request('prompt.submit'")
+  const nextLines = source.slice(submit, source.indexOf('\n', source.indexOf('\n', submit) + 1))
+  assert.ok(!nextLines.includes('markRelayed'))
+  assert.equal(source.split('markRelayed(').length - 1, 1) // one call (defined as `markRelayed = id =>`)
+  const open = source.indexOf('host.newChat(profile || null)')
+  assert.ok(source.slice(open, open + 200).includes('markRelayed(a.storedId)'))
+})
+
+check('after a cancel the automatic relay pauses 15 minutes; the manual reset stays', () => {
+  assert.ok(source.includes('const CANCEL_COOLDOWN_MS = 15 * 60000'))
+  assert.ok(source.includes('cancelledAt.get(storedId) || 0) < CANCEL_COOLDOWN_MS'))
+  assert.ok(source.includes("ctx.storage.remove('relayed')"))
+  assert.ok(source.includes('cancelledAt.clear()'))
 })
 
 console.log(`\n${passed} checks, 0 failures`)

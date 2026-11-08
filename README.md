@@ -8,7 +8,9 @@
 > hand-off request asks the agent to write the hand-off with the `hermes-optimize-handoff` skill
 > (its template, then its `check` until it passes) and to send the prompt that check prints as the
 > note, instead of a free-form note. A reply that starts `Session Relay: no hand-off:` shows a
-> warning and opens no new chat. Everything else is upstream's. Upstream:
+> warning and opens no new chat. A chat is marked relayed only once its new chat opens; a
+> cancelled hand-off ends the wait at once, leaves the chat unmarked and pauses its automatic
+> relay for 15 minutes (⚡ and Reset marks still work). Everything else is upstream's. Upstream:
 > [ikuro4kin-dev/hermes-session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay).
 
 Hermes compacts a conversation when its context reaches ~50% of the model window. Compaction keeps a summary and drops details; after two or three compactions a long working session turns into a soup of half-remembered facts and duplicated messages. Session Relay solves the same problem the other way round: as the context approaches the threshold, the agent writes a hand-off note and opens a **new chat** that starts with that note — while the old chat stays untouched and readable.
