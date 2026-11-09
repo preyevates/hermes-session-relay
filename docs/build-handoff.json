@@ -1,0 +1,317 @@
+{
+  "version": "0.4.0+estate.5",
+  "baseline": "f98060cfde19c9cb959664f89d99824a9be6c1f1",
+  "host_commit": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
+  "build_only": true,
+  "test_counts": {
+    "javascript_event_checks": 105,
+    "required_python_checks": 48,
+    "supplemental_python_checks": 4,
+    "supplemental_known_limit_assertions": 2,
+    "candidate_suite_exits_all_zero": true
+  },
+  "old_commit_failures": [
+    {
+      "suite": "astra_adversarial.mjs",
+      "exit_code": 1,
+      "counts": [
+        0,
+        15
+      ],
+      "failure_lines": [
+        "FAIL D1 not-yet waits for next human reply even with busy chip transition: Expected values to be strictly equal:",
+        "FAIL D2 profile switched during title RPC never steals owner: Cannot read properties of undefined (reading 'options')",
+        "FAIL D3 become busy during title RPC aborts admission: Expected values to be strictly equal:",
+        "FAIL D4 replacing new draft cannot receive note; exact successor only: Expected values to be strictly equal:",
+        "FAIL D5 title failure never falls back to focused runtime: Cannot read properties of undefined (reading 'id')",
+        "FAIL D6 unconfirmed durable first message never marks: Expected values to be strictly equal:",
+        "FAIL D7 stale first timer cannot abandon second wait: Expected values to be strictly equal:",
+        "FAIL D8 reset cancels delayed title continuation: Expected values to be strictly equal:",
+        "FAIL D9 reload preserves pause for same owner and stored id: Expected values to be strictly equal:",
+        "FAIL D10 full connection owner retained despite source switch: Cannot read properties of undefined (reading 'options')",
+        "FAIL D11 exact delimiter rejects Session Relay <token> not yeti; continuing summary: Expected values to be strictly equal:",
+        "FAIL D11 exact delimiter rejects Session Relay <token> no hand-offer; continuing summary: Expected values to be strictly equal:",
+        "FAIL D11 exact delimiter rejects Session Relay <token> not yesterday: Expected values to be strictly equal:",
+        "FAIL D11 exact delimiter rejects I cannot do this.",
+        "FAIL D12 title increment preserved at limit: Cannot read properties of undefined (reading '1')"
+      ],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "attempt_events.mjs",
+      "exit_code": 1,
+      "counts": [
+        0,
+        15
+      ],
+      "failure_lines": [
+        "FAIL R2/F8 focus, effects and gauge poll never submit; human completion does: Expected values to be strictly equal:",
+        "FAIL R1/3/11/D2/D3/D8 capture owner and cancel async admission on busy/reset: Expected values to be strictly equal:",
+        "FAIL R5/8 exact envelope seeds prompt only, into exact captured-owner successor: The expression evaluated to a falsy value:",
+        "FAIL R12/F6 reload reconciles already arrived reply exactly once without resubmission: Expected values to be strictly equal:",
+        "FAIL R12 backend restart remaps exact stored id, waits for same submitted row: Expected values to be strictly equal:",
+        "FAIL R13 missing skill skips automatic request, informs once; manual still works: Expected values to be strictly equal:",
+        "FAIL R8 retained note has a working Copy saved note action: The expression evaluated to a falsy value:",
+        "FAIL R12 live backend restart without plugin reload matches stored id: Expected values to be strictly equal:",
+        "FAIL R2 background completion uses previously observed owner, not current focus: Cannot read properties of undefined (reading 'options')",
+        "FAIL R8 legacy profile route opens by profile option: Cannot read properties of undefined (reading 'options')",
+        "FAIL R12 unloaded async admission cannot submit or overwrite successor instance: Expected values to be strictly equal:",
+        "FAIL R5 first line is exact, not whitespace-normalized; seed body preserved: Cannot read properties of undefined (reading 'text')",
+        "FAIL R3 runtime/stored mismatch or backend busy (even stale renderer) refuses admission: Expected values to be strictly equal:",
+        "FAIL R3 final gateway idle snapshot rejects backend turn started during title await: Expected values to be strictly equal:",
+        "FAIL R2 chip stays a gauge while an attempt waits: Expected values to be strictly equal:"
+      ],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "desktop_find_fresh_session.mjs",
+      "exit_code": 1,
+      "counts": null,
+      "failure_lines": [],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "desktop_handoff_request.mjs",
+      "exit_code": 1,
+      "counts": null,
+      "failure_lines": [],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "desktop_relay_events.mjs",
+      "exit_code": 1,
+      "counts": null,
+      "failure_lines": [],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "relay_adversarial.mjs",
+      "exit_code": 1,
+      "counts": [
+        3,
+        18
+      ],
+      "failure_lines": [
+        "FAIL F1 not-yet does not re-ask on chip/completion timer: Expected values to be strictly equal:",
+        "FAIL F2 reject bold: Expected values to be strictly equal:",
+        "FAIL F2 reject explain-then-line: Expected values to be strictly equal:",
+        "FAIL F2 reject ordinary-answer: Expected values to be strictly equal:",
+        "FAIL F2 quoted control words inside valid note are data: Expected values to be strictly equal:",
+        "FAIL F5 failed seed never marks, retains note, explains copy: Expected values to be strictly equal:",
+        "FAIL F4 two chats can wait concurrently: Expected values to be strictly equal:",
+        "FAIL F6 reload live wait handles completion without re-asking: Expected values to be strictly equal:",
+        "FAIL F6 backend remint recovery matches stored id: Expected values to be strictly equal:",
+        "FAIL F10 long title reserves increment space: Cannot read properties of undefined (reading '1')",
+        "FAIL F11 unrelated recent row never renamed: Cannot read properties of undefined (reading 'stored')",
+        "FAIL sound refusal pauses 15 minutes then human turn can retry: Expected values to be strictly equal:",
+        "FAIL F9 old timeout never warns newer attempt: Expected values to be strictly equal:",
+        "FAIL F7 owner captured before title awaits: Cannot read properties of undefined (reading 'options')",
+        "FAIL F8 poll with rising context never submits: Expected values to be strictly equal:",
+        "FAIL F1 five not-yet duplicates never loop without human input: Expected values to be strictly equal:",
+        "FAIL F3 empty completion releases without pause; ordinary answer never seeded: Cannot convert undefined or null to object",
+        "FAIL F8 opening idle full chat to read never submits: Expected values to be strictly equal:"
+      ],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "required_behaviour.mjs",
+      "exit_code": 1,
+      "counts": [
+        2,
+        21
+      ],
+      "failure_lines": [
+        "FAIL R2 failed/interrupted/missing-status events never start: Expected values to be strictly equal:",
+        "FAIL R2 manual works below threshold: Expected values to be strictly equal:",
+        "FAIL R4 wrong or missing chat id cannot supply note: Expected values to be strictly equal:",
+        "FAIL R4 mismatched human receipt cannot supply note: Expected values to be strictly equal:",
+        "FAIL R4 no receipt fallback handles first non-human completion only: Expected values to be strictly equal:",
+        "FAIL R5 fail closed Session Relay wrong hand-off",
+        "FAIL R5 fail closed **Session Relay <token> hand-off**",
+        "FAIL R5 fail closed Explanation",
+        "FAIL R5 fail closed Session Relay <token> hand-off: Expected values to be strictly equal:",
+        "FAIL R5 fail closed Session Relay <token> not yet:: Expected values to be strictly equal:",
+        "FAIL R5 fail closed Session Relay <token> no hand-off:: Expected values to be strictly equal:",
+        "FAIL R5 allows one whole-reply fence; seeds no first protocol line: Cannot read properties of undefined (reading 'text')",
+        "FAIL R6 only next human turn re-arms deferral; no warning/pause: Cannot convert undefined or null to object",
+        "FAIL R7 failed hidden admission pauses only its chat: Cannot convert undefined or null to object",
+        "FAIL R8 duplicate completion creates exactly one successor: Expected values to be strictly equal:",
+        "FAIL R8 open failure retains mark and identifies existing successor: Cannot read properties of undefined (reading 'stored')",
+        "FAIL R10 at 30 minutes running warns then checks at 5 minute cadence: Expected values to be strictly equal:",
+        "FAIL R10 stopped without text releases, does not time out newer attempt: Cannot convert undefined or null to object",
+        "FAIL R11 reset clears timers, attempts, marks and pauses: Cannot convert undefined or null to object",
+        "FAIL R12 reload after confirmed seed never resends or creates again: Expected values to be strictly equal:",
+        "FAIL R1 unresolved modern owner fails closed; legacy profile-only still supported: Expected values to be strictly equal:"
+      ],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "test_auto_handoff.py",
+      "exit_code": 1,
+      "counts": [
+        35,
+        4
+      ],
+      "failure_lines": [
+        "FAIL timed-out busy trigger keeps note and state",
+        "FAIL malformed note does not authorize reset",
+        "FAIL request finishes work before skill and uses token protocol",
+        "FAIL request finishes work before skill and uses token protocol"
+      ],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    },
+    {
+      "suite": "gateway_adversarial.py",
+      "exit_code": 1,
+      "counts": null,
+      "failure_lines": [],
+      "detail": "Full stdout/stderr in docs/test-results.json; some old-code failures are missing exact-session/receipt state (TypeError), not separate bug counts."
+    }
+  ],
+  "findings": {
+    "F1": {
+      "status": "fixed",
+      "reason": "Automatic admission requires a new visible human row; hidden duplicates, effects and polls cannot re-arm it. No deferral-consumption probe remains."
+    },
+    "F2": {
+      "status": "fixed",
+      "reason": "Positive exact token envelope; ordinary, bold, explain-then-line and wrong-token replies fail closed."
+    },
+    "F3": {
+      "status": "fixed",
+      "reason": "Empty completion ends the attempt without chat or pause."
+    },
+    "F4": {
+      "status": "fixed",
+      "reason": "Owner+stored-id keyed attempts replace the global wait and global in-flight lock."
+    },
+    "F5": {
+      "status": "fixed",
+      "reason": "Mark follows exact successor identity and durable first-user-message confirmation; failed notes retained with Copy action."
+    },
+    "F6": {
+      "status": "fixed",
+      "reason": "Durable attempts/pauses and exact stored-id remapping; history reconciliation without request/seed replay; unload invalidates old continuations."
+    },
+    "F7": {
+      "status": "fixed",
+      "reason": "Owner and both IDs captured synchronously before any await; route resolved by immutable owner pair."
+    },
+    "F8": {
+      "status": "fixed",
+      "reason": "Chip/gauge/focus/poll are read-only. Only human completion or explicit manual click starts an attempt."
+    },
+    "F9": {
+      "status": "fixed",
+      "reason": "Timeout disposer keyed to attempt id, cancelled on end/reset/unload; generation guards stale continuations."
+    },
+    "F10": {
+      "status": "fixed",
+      "reason": "Title base trimmed to reserve number suffix within 40 characters."
+    },
+    "F11": {
+      "status": "fixed",
+      "reason": "No recent-row scan or fallback; only the confirmed exact successor is titled."
+    },
+    "F12": {
+      "status": "fixed",
+      "reason": "Gateway request now finish-first with the same token protocol. Skill text is proposed in skill_edit only, deliberately not edited."
+    },
+    "F13": {
+      "status": "fixed",
+      "reason": "Public scoped host.skills.list checked before automatic submission; missing/disabled skill skips and notices once per owner/load."
+    },
+    "F14": {
+      "status": "fixed",
+      "reason": "Live dependency-sensitive effects, whole-plugin event tests, shared storage, receipts, failed seed, restart, unload, timers and reset. Retired source-shape assertions documented."
+    },
+    "D1": {
+      "status": "fixed",
+      "reason": "Same as F1; no not-yet loop, warning or pause without another human completion."
+    },
+    "D2": {
+      "status": "fixed",
+      "reason": "Same as F7; switches during title/context lookup cannot recapture ownership."
+    },
+    "D3": {
+      "status": "fixed",
+      "reason": "Reproduced title-await admission race fixed by generation/busy checks after every admission await and final backend idle snapshot. Turn reply correlated by user_row_id. Public host lacks atomic idle-only submission: residual transport gap documented, not claimed solved."
+    },
+    "D4": {
+      "status": "fixed",
+      "reason": "Amended rule 8: create and seed exact owner-routed session IDs; no draft/composer API used."
+    },
+    "D5": {
+      "status": "fixed",
+      "reason": "No preview/recency matching or focused-chat title fallback; exact confirmed stored id only."
+    },
+    "D6": {
+      "status": "fixed",
+      "reason": "Same as F5; no mark without durable first-message confirmation."
+    },
+    "D7": {
+      "status": "fixed",
+      "reason": "Same as F9; earlier attempt timer cannot warn/abandon newer one."
+    },
+    "D8": {
+      "status": "fixed",
+      "reason": "Reset bumps durable generation, cancels all timers, clears marks/pauses/attempts, and invalidates asynchronous starts."
+    },
+    "D9": {
+      "status": "fixed",
+      "reason": "Pauses, seen human rows and attempts persist; reload cannot bypass pause or resend hidden request."
+    },
+    "D10": {
+      "status": "fixed",
+      "reason": "Captured connection-qualified owner resolved through profileRoutes and retained throughout; never reroutes through current source."
+    },
+    "D11": {
+      "status": "fixed",
+      "reason": "Anchored exact first line and delimiters with token, optional one whole-reply fence, no markdown/preamble normalization."
+    },
+    "D12": {
+      "status": "fixed",
+      "reason": "Same as F10; suffix room reserved."
+    },
+    "G1": {
+      "status": "documented",
+      "reason": "Documented, not fixed: watchdog snapshot is not atomic event-loop reset admission. Watchdog remains off by default; no settings changed."
+    },
+    "G2": {
+      "status": "fixed",
+      "reason": "Running-route guard now precedes timeout cleanup, retaining active request/note."
+    },
+    "G3": {
+      "status": "fixed",
+      "reason": "Validated _read_pending is required before reset scheduling, not file existence alone."
+    },
+    "G4": {
+      "status": "documented",
+      "reason": "Documented, not fixed per Frasier amendment: carry is consumed before authorization/durable admission. Needs separate gateway admission design; off watchdog does not itself fix manual carry."
+    },
+    "G5": {
+      "status": "documented",
+      "reason": "Documented, not fixed: host isolation intentionally withholds live runner/session-store objects; no isolation weakening."
+    }
+  },
+  "skill_edit": {
+    "skill": "hermes-optimize-handoff",
+    "file": "SKILL.md",
+    "action": "proposal only; no skill edit staged/applied",
+    "old_text": "- **Finish the work in hand before the hand-off, and leave nothing half-saved.** A relay request that arrives mid-task is not a reason to stop: unfinished or uncommitted work in a shared repository fails `check` and leaves a mess the next session must untangle, and he counts a hand-off that interrupts unfinished work as a failure. Finish and commit it; if finishing needs his answer, answer `Session Relay: no hand-off:` naming that question rather than abandoning the work.",
+    "replacement_text": "- **Finish the work in hand before the hand-off, and leave nothing half-saved.** Finish the existing task when it can finish without his answer, then commit and push its changes before running `check`. For a token-bearing Session Relay request, use the exact token from that request: reply with `Session Relay <token> hand-off` as the first line and only the check's printed prompt after it; if finishing needs his answer, reply only `Session Relay <token> not yet: <what is needed>`; for another reason the check cannot pass, reply only `Session Relay <token> no hand-off: <reason>`. No preamble, markdown emphasis or ordinary answer is a hand-off; one code fence around the entire reply is allowed. The plugin seeds only the text after the hand-off first line. This token protocol overrides the legacy Session Relay formatting in Procedure step 6; a normal hand-off requested by a person still ends with the copyable prompt.",
+    "companion_procedure_step_6_replacement": "6. **Run `check` until it exits 0,** then end a normal human-requested hand-off with the prompt it printed in one copyable code block. For a token-bearing Session Relay request, use its exact three-line-form protocol as described under Pitfalls: the hand-off first line followed by the printed prompt, or the single not-yet/no-hand-off line. Do not use the legacy untagged Session Relay reply format."
+  },
+  "limits": [
+    "No installation, enable, restart, rescan, profile-config edit, installed-plugin edit or Hermes-source edit.",
+    "No live compositor/gateway/model test was authorized/exercised.",
+    "No public atomic idle-only submit; final idle snapshot and renderer guard cannot close a different client's transport-gap race.",
+    "Unknown background owners are skipped rather than guessed; known source IDs/owners are captured before awaits.",
+    "Gateway G1/G4/G5 remain documented and unfixed."
+  ],
+  "validation": {
+    "native_validate": "Passed 16 checks; warnings for inherited gateway private imports and host-isolation live-object limitation. No install-deps flag used.",
+    "lint": "ruff check production Python plus all Python test/runner files passed; node --check passed; prettier applied to JS; git diff --check passed.",
+    "version_order": "packaging.version verified 0.4.0+estate.5 < 0.4.1."
+  }
+}

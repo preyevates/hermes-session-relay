@@ -1,538 +1,716 @@
-/**
- * Session Relay — a Hermes Desktop plugin.
- *
- * What it does (automatic hand-off to a new session when the context fills up):
- *  1. Watches how full the focused session's context window is.
- *  2. When usage crosses the threshold and the turn has finished, it submits a
- *     hidden service message: the agent writes the hand-off with the
- *     `hermes-optimize-handoff` skill (its template, then its check until it
- *     passes) and replies with the prompt the check printed. That prompt is
- *     the note.
- *  3. The plugin opens the new chat through the SDK — host.newChat() — and
- *     submits the note into it (host.composer.submit('new', note)), so the
- *     fresh session starts with the hand-off as its first user message. The new
- *     chat is named after the current one with the number incremented
- *     ("Bugfix-6" → "Bugfix-7").
- *  4. A toast and an OS notification announce the new chat; clicking the
- *     notification opens it.
- *
- * No agent tool is involved: the plugin reads the agent's reply from the
- * message.complete event and types the note into the new chat itself.
- *
- * The ⚡ chip in the status bar starts a relay manually (works below the
- * threshold too). Settings live under Settings → Plugins → Session Relay.
- *
- * The default threshold is 45% — below the point (~50%) where Hermes compacts
- * the history itself, so the relay fires before compaction. Change it in the
- * plugin settings or in DEFAULTS below.
- */
-
-import { atom, Button, cn, haptic, host, ListRow, SegmentedControl, Tip, ToggleRow, useValue } from '@hermes/plugin-sdk'
+/** Session Relay: owner-qualified, durable hand-off attempts. No draft/composer writes.
+ * Host contract and receipt limits: docs/host-contract.md. */
+import {
+  atom,
+  Button,
+  cn,
+  haptic,
+  host,
+  ListRow,
+  SegmentedControl,
+  Tip,
+  ToggleRow,
+  useValue
+} from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect } from 'react'
 
 const ID = 'session-relay'
 const TITLE_LIMIT = 40
 const DEFAULTS = { auto: true, threshold: 45 }
-// Finishing the work in hand, writing the hand-off and passing its check takes tool calls.
-// When this passes, a turn still running is warned about and checked again; a stopped one is released.
 const NOTE_TIMEOUT_MS = 1800000
-// How often a long-running hand-off turn is checked again after that.
 const RECHECK_MS = 300000
-// The agent's reply when it could not produce a hand-off: shown, never seeded.
-const NO_HANDOFF = 'Session Relay: no hand-off'
-// The agent's reply when the work in hand cannot finish without his answer: the
-// relay asks again after his next reply, with no pause and no warning.
-const NOT_YET = 'Session Relay: not yet'
+const CANCEL_COOLDOWN_MS = 900000
+const PCT_REFRESH_MS = 30000
 const HANDOFF_SKILL = 'hermes-optimize-handoff'
-// After a cancelled or refused hand-off, the automatic relay leaves that chat alone this long
-// (the gateway half's _AUTO_CANCEL_COOLDOWN_S). The ⚡ button is never held back.
-const CANCEL_COOLDOWN_MS = 15 * 60000
 
-/** The hidden service message that asks for the hand-off. */
-function handoffRequest(pct) {
+function handoffRequest(pct, token) {
+  const prefix = 'Session Relay ' + token
   return [
     '[Session Relay plugin — service message]',
     'Context usage in this session: ' + (pct == null ? '—' : pct + '%') + '.',
-    'Time to hand this work to a fresh session. Do not start new work.',
-    'First finish the work in hand, if it can finish without his answer: complete it, then commit and push what it changed.',
-    'If it cannot finish without his answer, reply with one line that starts "' + NOT_YET + ':" and names what you need from him; the plugin asks again after his next reply.',
-    'Then load the skill `' + HANDOFF_SKILL + '` and follow its Procedure: put the lasting results in their homes, write the hand-off from its template, and run its `check` until it exits 0.',
-    'Your WHOLE reply is the `prompt` the check printed, exactly as printed: no code block around it, nothing before or after it. The plugin opens the new chat itself and sends your reply there as its first message.',
-    'If the check cannot pass for another reason, reply with one line that starts "' + NO_HANDOFF + ':" and names what stops it; no new chat is opened.'
+    'Do not start new work. First finish the work in hand, if it can finish without his answer: complete it, then commit and push what it changed.',
+    'Then load the skill `' +
+      HANDOFF_SKILL +
+      '` and follow its Procedure: put lasting results in their homes, write the hand-off from its template, and run its `check` until it exits 0.',
+    'Use exactly one of these first lines (with this token), with no preamble or markdown emphasis:',
+    prefix + ' hand-off',
+    'After that first line, put only the `prompt` the check printed, exactly as printed. The plugin creates and seeds the new chat itself.',
+    prefix + ' not yet: <what is needed from him to finish>',
+    'Use not yet if finishing needs his answer; nothing opens and the next request waits for his next completed reply.',
+    prefix + ' no hand-off: <reason the check cannot pass>',
+    'Use no hand-off for any other failure. Anything outside this protocol opens no chat.'
   ].join('\n')
 }
-const SEED_TRIES = 40
-const SEED_RETRY_MS = 500
-// The streamed usage the desktop keeps for the primary chat carries no
-// context_percent (its own gauge asks the gateway for a breakdown instead),
-// so the chip polls the same read-only RPC.
-const PCT_REFRESH_MS = 30000
-
-/** "Bugfix-6" → "Bugfix-7"; a title without a number gets "-2". */
 function nextTitle(raw) {
   const t = String(raw || '').trim()
-  if (!t) {
-    return ''
-  }
+  if (!t) return ''
   const m = t.match(/^(.*?)(\d+)(\D*)$/)
-  let out
-  if (!m) {
-    out = t + '-2'
-  } else {
-    const n = String(parseInt(m[2], 10) + 1)
-    const num = m[2].length > 1 && m[2].startsWith('0') ? n.padStart(m[2].length, '0') : n
-    out = m[1] + num + m[3]
-  }
-  return out.length > TITLE_LIMIT ? out.slice(0, TITLE_LIMIT) : out
+  if (!m) return t.slice(0, TITLE_LIMIT - 2) + '-2'
+  const n = String(parseInt(m[2], 10) + 1)
+  const num = m[2].length > 1 && m[2].startsWith('0') ? n.padStart(m[2].length, '0') : n
+  const suffix = num + m[3]
+  return m[1].slice(0, Math.max(0, TITLE_LIMIT - suffix.length)) + suffix
 }
-
-/** The reply without one code block wrapped round the whole of it: the hand-off skill shows its prompt in one. */
 function unfence(reply) {
-  const t = String(reply || '').trim()
+  const t = String(reply || '').replace(/\r\n/g, '\n')
   const m = t.match(/^```[^\n]*\n([\s\S]*?)\n```$/)
-  return m ? m[1].trim() : t
+  return m ? m[1] : t
 }
-
-/**
- * What the reply to the hand-off request means. A turn that did not finish (he cancelled
- * it, or it failed) ends the wait; an empty one is skipped; a refusal opens no chat.
- */
-function noteOutcome(payload) {
+function noteOutcome(payload, token) {
   const p = payload || {}
-  if (p.status && p.status !== 'complete') {
-    return { kind: 'cancelled', status: String(p.status) }
-  }
-  const note = unfence(p.text || p.content || '')
-  if (!note) {
-    return { kind: 'skip' }
-  }
-  if (note.startsWith(NOT_YET)) {
-    return { kind: 'deferred', note }
-  }
-  if (note.startsWith(NO_HANDOFF)) {
-    return { kind: 'refused', note }
-  }
-  return { kind: 'note', note }
-}
-
-/** First words of a hand-off note, whitespace collapsed: the new chat's list preview starts with them. */
-function noteMarker(note) {
-  return String(note || '').replace(/\s+/g, ' ').trim().slice(0, 40)
-}
-
-/**
- * Pick the chat the relay just opened: a session that is not the old one and appeared
- * around the relay. Match on the note's opening first (exact, independent of labels);
- * otherwise accept any desktop-ish row. Builds differ on the label they store for a
- * desktop chat — "desktop" on some, "local" (created_source stays "desktop") when the
- * routing row is stamped first — so a strict `source === 'desktop'` check misses the
- * new chat and the title is never applied.
- */
-function findFreshSession(rows, storedId, sinceTs, marker) {
-  const fresh = (rows || []).filter(
-    r => r && r.id && r.id !== storedId && (!r.started_at || r.started_at >= sinceTs - 120)
+  if (p.status !== 'complete') return { kind: 'cancelled' }
+  const text = unfence(typeof p.text === 'string' ? p.text : '')
+  if (!text.trim()) return { kind: 'empty' }
+  const [line, ...rest] = text.split('\n')
+  const prefix = 'Session Relay ' + token
+  if (line === prefix + ' hand-off' && rest.join('\n').trim()) return { kind: 'note', note: rest.join('\n') }
+  if (
+    line.startsWith(prefix + ' not yet: ') &&
+    line.slice((prefix + ' not yet: ').length).trim() &&
+    !rest.length
   )
-  if (!fresh.length) {
-    return null
-  }
-  if (marker) {
-    const hit = fresh.find(r => String(r.preview || '').replace(/\s+/g, ' ').includes(marker))
-    if (hit) {
-      return hit
-    }
-  }
-  return fresh.find(r => ['desktop', 'local', 'gui'].includes(String(r.source || '').toLowerCase())) || null
+    return { kind: 'deferred' }
+  if (
+    line.startsWith(prefix + ' no hand-off: ') &&
+    line.slice((prefix + ' no hand-off: ').length).trim() &&
+    !rest.length
+  )
+    return { kind: 'refused' }
+  return { kind: 'invalid' }
 }
+const readAtom = (name, fallback = null) => host.state[name]?.get?.() ?? fallback
+const ownerKey = (owner) =>
+  typeof owner === 'string' ? ['profile', owner] : [owner.connectionId, owner.profile]
+const chatKey = (owner, storedId) => JSON.stringify([...ownerKey(owner), storedId])
 
 export default {
   id: ID,
   name: 'Session Relay',
-
   register(ctx) {
-    const storedPrefs = { ...ctx.storage.get('prefs', {}) }
-    const prefs = atom({ ...DEFAULTS, ...storedPrefs })
+    const prefs = atom({ ...DEFAULTS, ...ctx.storage.get('prefs', {}) })
     const $relay = atom({ phase: 'idle', title: '' })
     const $pct = atom(null)
-    const pendingIds = new Set()
-    let inFlight = false
-    let lastProbeAt = 0
-    let lastFailAt = 0
-    // The relay whose hand-off note has not arrived yet:
-    // { runtimeId, storedId, newTitle }.
-    let awaiting = null
-    // storedId -> when its hand-off was cancelled, refused or never arrived.
-    const cancelledAt = new Map()
-    // storedIds whose hand-off waits for his next reply: the deferral's own completed
-    // turn triggers one automatic check, which this skips.
-    const deferred = new Set()
-
-    /** End the wait without opening a chat; the chat stays unmarked and pauses its automatic relay. */
-    const endWait = (storedId, kind, message) => {
-      awaiting = null
-      cancelledAt.set(storedId, Date.now())
-      $relay.set({ phase: 'idle', title: '' })
-      host.notify({ kind, message })
+    let generation = ctx.storage.get('attemptGeneration', 0)
+    let serial = 0
+    const attempts = new Map()
+    const timers = new Map()
+    const retained = new Map()
+    const recovering = new Set()
+    const pauses = { ...ctx.storage.get('pauses', {}) }
+    const seen = { ...ctx.storage.get('seenHumanRows', {}) }
+    const ownRows = { ...ctx.storage.get('ownRows', {}) }
+    const missingSkill = new Set()
+    const observedChats = new Map()
+    function rememberFocus() {
+      const runtimeId = readAtom('focusedSessionId'),
+        storedId = readAtom('focusedStoredSessionId')
+      const raw = host.state.focusedSessionOwner
+        ? readAtom('focusedSessionOwner')
+        : readAtom('focusedSessionProfile', readAtom('profile'))
+      if (!runtimeId || !storedId || !raw) return null
+      const owner = typeof raw === 'string' ? raw : { ...raw }
+      const chat = { runtimeId, storedId, owner }
+      observedChats.set(runtimeId, chat)
+      return chat
     }
-
-    console.log('[session-relay] loaded; threshold=' + prefs.get().threshold)
-
-    const update = patch => {
+    rememberFocus()
+    const readRelayed = () => ctx.storage.get('relayed', {}) || {}
+    const persist = () => {
+      ctx.storage.set('attempts', Object.fromEntries(attempts))
+      ctx.storage.set('pauses', pauses)
+      ctx.storage.set('seenHumanRows', seen)
+      ctx.storage.set('ownRows', ownRows)
+    }
+    const update = (patch) => {
       prefs.set({ ...prefs.get(), ...patch })
       ctx.storage.set('prefs', prefs.get())
     }
-
-    const readRelayed = () => ctx.storage.get('relayed', {}) || {}
-
-    const markRelayed = id => {
-      const map = { ...readRelayed() }
-      const cutoff = Date.now() - 30 * 864e5
-      for (const k of Object.keys(map)) {
-        if (!map[k] || map[k] < cutoff) {
-          delete map[k]
-        }
-      }
-      map[id] = Date.now()
-      ctx.storage.set('relayed', map)
+    let disposed = false
+    const live = (a) => !disposed && attempts.get(a.key)?.id === a.id && a.generation === generation
+    ctx.onDispose(() => {
+      disposed = true
+      for (const cancel of timers.values()) cancel()
+      for (const release of retained.values()) release()
+      timers.clear()
+      retained.clear()
+      // Preserve durable attempts for the next instance; late continuations are inert.
+    })
+    const isBusy = (id) => readAtom('busyBySession', {})[id] === true
+    const cancelTimer = (a) => {
+      timers.get(a.id)?.()
+      timers.delete(a.id)
     }
-
-    const isBusy = runtimeId => {
-      const atomRef = host.state.busyBySession
-      const m = (atomRef && atomRef.get && atomRef.get()) || {}
-      return m[runtimeId] === true
+    const end = (a, { pause = false, message = '', kind = 'info' } = {}) => {
+      if (!live(a)) return
+      cancelTimer(a)
+      retained.get(a.id)?.()
+      retained.delete(a.id)
+      attempts.delete(a.key)
+      if (pause) pauses[a.key] = Date.now() + CANCEL_COOLDOWN_MS
+      persist()
+      $relay.set({ phase: 'idle', title: '' })
+      if (message) host.notify({ kind, message })
     }
-
-    async function precisePercent(runtimeId) {
-      lastProbeAt = Date.now()
-      try {
-        const res = await host.request('session.context_breakdown', { session_id: runtimeId })
-        if (res && typeof res.context_percent === 'number') {
-          return res.context_percent
-        }
-      } catch (e) {
-        console.log('[session-relay] breakdown failed, falling back to stream value', e)
+    const fail = (a, reason) => {
+      if (!live(a)) return
+      if (a.note) {
+        const notes = { ...ctx.storage.get('savedNotes', {}) }
+        notes[a.key] = { note: a.note, owner: a.owner, storedId: a.storedId, successor: a.successor || null }
+        ctx.storage.set('savedNotes', notes)
       }
-      const u = host.state.focusedUsage.get()
-      return u && typeof u.context_percent === 'number' ? u.context_percent : null
+      end(a, {
+        pause: true,
+        message:
+          'Session relay: ' +
+          reason +
+          (a.note
+            ? ' The note is kept in Settings → Session Relay → Copy saved note. Or copy the reply in the old chat without its first protocol line.'
+            : ' Automatic relay pauses in this chat for 15 minutes.')
+      })
     }
-
-    /**
-     * Keep the chip's number in step with the gateway. The value is only
-     * accepted while the same chat is still focused, so a slow answer can
-     * never paint one chat's occupancy onto another.
-     */
-    async function refreshPct() {
-      const runtimeId = host.state.focusedSessionId && host.state.focusedSessionId.get()
-      if (!runtimeId) {
-        $pct.set(null)
-        return null
+    const validStart = (a) => {
+      if (!live(a)) return false
+      if (isBusy(a.runtimeId)) {
+        end(a)
+        return false
       }
-      const pct = await precisePercent(runtimeId)
-      const focused = host.state.focusedSessionId && host.state.focusedSessionId.get()
-      if (focused === runtimeId) {
-        $pct.set(pct == null ? null : pct)
-      }
-      return pct
+      return true
     }
-
-    /** Give the new chat the previous title with the number incremented. */
-    function applyTitle(storedId, newTitle, retry) {
-      if (!newTitle || typeof host.request !== 'function') {
-        return
-      }
-      host.request('session.title', { session_id: storedId, title: newTitle }).then(
-        res => {
-          const title = String((res && res.title) || '')
-          console.log('[session-relay] title applied: ' + (title || newTitle))
-        },
-        e => {
-          // A chat that went live under its runtime id may need that id instead.
-          const runtimeId = host.state.focusedSessionId && host.state.focusedSessionId.get()
-          if (retry && runtimeId && runtimeId !== storedId) {
-            applyTitle(runtimeId, newTitle, false)
-          } else {
-            console.log('[session-relay] title apply failed', e)
-          }
-        }
+    const rpc = (a, method, params = {}) => host.requestProfile(a.route || a.owner, method, params)
+    const resolveRoute = async (a) => {
+      if (typeof a.owner === 'string') return a.owner
+      const routes = await host.profileRoutes()
+      if (!live(a)) return null
+      const matches = routes.filter(
+        (r) => r.connectionId === a.owner.connectionId && r.profile === a.owner.profile
       )
+      if (matches.length !== 1) throw Error('The asking chat owner is no longer uniquely routable.')
+      return { ...matches[0] }
     }
-
-    function watchForSession(storedId, newTitle, marker) {
-      // ~2 minute window: 24 ticks × 5 s after an initial 4 s pause.
-      let left = 24
-      const t0 = Date.now() / 1000
-      const tick = async () => {
-        try {
-          const res = await host.request('session.list', { limit: 15 })
-          const rows = (res && res.sessions) || []
-          // Confirm by the APPEARANCE of a new session, not by its title: the
-          // gateway writes the new chat's title only after its first turn
-          // ends (minutes), so a title check used to time out and report a
-          // false "not confirmed".
-          const hit = findFreshSession(rows, storedId, t0, marker)
-          if (hit) {
-            applyTitle(hit.id, newTitle, true)
-            $relay.set({ phase: 'done', title: newTitle })
-            host.notify({ kind: 'success', message: 'Session relay ready: "' + (newTitle || 'new chat') + '"' })
-            try {
-              ctx.os.notify({ title: 'Session relay ready', body: newTitle || 'new chat', activate: '/' + encodeURIComponent(hit.id) })
-            } catch (e) {
-              console.log('[session-relay] os.notify failed', e)
+    function capture(
+      runtimeId = readAtom('focusedSessionId'),
+      storedId = readAtom('focusedStoredSessionId'),
+      ownerOverride = undefined
+    ) {
+      if (!runtimeId || !storedId) return null
+      const ownerAtom = host.state.focusedSessionOwner
+      const raw =
+        ownerOverride ??
+        (ownerAtom ? ownerAtom.get() : readAtom('focusedSessionProfile', readAtom('profile')))
+      // A modern host's ambiguous null owner is not a profile-only fallback.
+      if (!raw) return null
+      const owner = typeof raw === 'string' ? raw : { ...raw }
+      const key = chatKey(owner, storedId)
+      if (attempts.has(key)) return null
+      const id =
+        Date.now().toString(36) + '-' + (++serial).toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+      const a = {
+        id,
+        token: id.slice(-6),
+        generation,
+        runtimeId,
+        storedId,
+        owner,
+        key,
+        phase: 'admitting',
+        startedAt: Date.now(),
+        deadline: Date.now() + NOTE_TIMEOUT_MS
+      }
+      attempts.set(key, a)
+      persist() // Synchronous reservation precedes every await.
+      return a
+    }
+    async function precisePercent(a) {
+      const res = await rpc(a, 'session.context_breakdown', { session_id: a.runtimeId })
+      return typeof res?.context_percent === 'number' ? res.context_percent : null
+    }
+    async function refreshPct() {
+      rememberFocus()
+      const runtimeId = readAtom('focusedSessionId'),
+        storedId = readAtom('focusedStoredSessionId')
+      const raw = host.state.focusedSessionOwner
+        ? readAtom('focusedSessionOwner')
+        : readAtom('focusedSessionProfile', readAtom('profile'))
+      if (!runtimeId || !storedId || !raw) {
+        $pct.set(null)
+        return
+      }
+      const owner = typeof raw === 'string' ? raw : { ...raw }
+      try {
+        const a = { runtimeId, storedId, owner }
+        // Read-only gauge does not create/resume an attempt.
+        if (typeof owner !== 'string') {
+          const routes = await host.profileRoutes()
+          a.route = routes.find((r) => r.connectionId === owner.connectionId && r.profile === owner.profile)
+          if (!a.route) return
+        }
+        const pct = await precisePercent(a)
+        if (
+          readAtom('focusedSessionId') === runtimeId &&
+          chatKey(raw, storedId) ===
+            chatKey(
+              readAtom('focusedSessionOwner', readAtom('focusedSessionProfile')),
+              readAtom('focusedStoredSessionId')
+            )
+        )
+          $pct.set(pct)
+      } catch {
+        /* A failed gauge is not permission to submit. */
+      }
+    }
+    async function start(a, manual, event) {
+      try {
+        if (!validStart(a)) return
+        const p = prefs.get()
+        if (!manual && (!p.auto || readRelayed()[a.key] || (pauses[a.key] || 0) > Date.now())) {
+          end(a)
+          return
+        }
+        a.route = await resolveRoute(a)
+        if (!validStart(a)) return
+        // Keep the exact route alive: requestProfile's per-call lease is insufficient.
+        if (host.retainProfile) {
+          const release = await host.retainProfile(a.route)
+          if (!validStart(a)) {
+            release()
+            return
+          }
+          retained.set(a.id, release)
+        }
+        const snapshot = await rpc(a, 'session.activate', { session_id: a.runtimeId })
+        if (!validStart(a)) return
+        if (snapshot.session_key !== a.storedId) {
+          fail(a, 'The asking chat runtime no longer matches its stored id.')
+          return
+        }
+        if (snapshot.running) {
+          end(a)
+          return
+        }
+        const messages = snapshot.messages || []
+        a.baseline = Math.max(0, ...messages.map((m) => Number(m.row_id) || 0))
+        if (!manual) {
+          const userId = event?.payload?.persisted_turn?.user_row_id
+          const user =
+            userId != null
+              ? messages.find((m) => m.role === 'user' && m.row_id === userId)
+              : [...messages].reverse().find((m) => m.role === 'user')
+          if (
+            !user ||
+            user.display_kind === 'hidden' ||
+            (ownRows[a.key] || []).includes(user.row_id) ||
+            (seen[a.key] || 0) >= user.row_id
+          ) {
+            end(a)
+            return
+          }
+          seen[a.key] = user.row_id
+          persist()
+          if (host.skills?.list) {
+            const scope =
+              typeof a.owner === 'string'
+                ? a.owner
+                : { connectionId: a.owner.connectionId, profile: a.route.targetProfile }
+            const skills = await host.skills.list(scope)
+            if (!validStart(a)) return
+            if (!skills.some((s) => s.name === HANDOFF_SKILL && s.enabled !== false)) {
+              const ownerId = JSON.stringify(ownerKey(a.owner))
+              if (!missingSkill.has(ownerId)) {
+                missingSkill.add(ownerId)
+                host.notify({
+                  kind: 'info',
+                  message:
+                    'Session relay: ' +
+                    HANDOFF_SKILL +
+                    ' is not available in the asking profile; automatic request skipped.'
+                })
+              }
+              end(a)
+              return
             }
-            return
           }
-        } catch (e) {
-          console.log('[session-relay] watch failed', e)
         }
-        if (--left > 0) {
-          ctx.setTimeout(tick, 5000)
-        } else {
-          $relay.set({ phase: 'idle', title: '' })
-          host.notify({ kind: 'warning', message: 'Session relay: the new chat was not confirmed. Check the chat list or press ⚡ to retry.' })
+        const pct = await precisePercent(a)
+        if (!validStart(a)) return
+        if (!manual && (pct == null || pct < p.threshold)) {
+          end(a)
+          return
         }
-      }
-      ctx.setTimeout(tick, 4000)
-    }
-
-    /**
-     * Open a fresh chat and submit the hand-off note into it, exactly as the
-     * user would: host.newChat() shows the draft, the composer sends the note.
-     * The draft's composer mounts asynchronously, so the submit is retried
-     * until a live surface claims it (or the window runs out).
-     */
-    function openAndSeed(note) {
-      const a = awaiting
-      awaiting = null
-      if (!a) {
-        return
-      }
-      if (typeof host.newChat !== 'function' || !host.composer || typeof host.composer.submit !== 'function') {
-        $relay.set({ phase: 'idle', title: '' })
-        host.notify({
-          kind: 'error',
-          message: 'Session relay: this Hermes Desktop build cannot open a chat from a plugin. Update Hermes Desktop.'
+        const title = await rpc(a, 'session.title', { session_id: a.runtimeId })
+        if (!validStart(a)) return
+        a.newTitle = nextTitle(title?.title)
+        const admission = await rpc(a, 'session.activate', { session_id: a.runtimeId, omit_messages: true })
+        if (!validStart(a)) return
+        if (admission.session_key !== a.storedId || admission.running) {
+          end(a)
+          return
+        }
+        a.phase = 'submitting'
+        a.submittedAt = Date.now()
+        a.deadline = a.submittedAt + NOTE_TIMEOUT_MS
+        persist()
+        // No await between this final admission guard and submission.
+        if (!validStart(a)) return
+        const receipt = await rpc(a, 'prompt.submit', {
+          session_id: a.runtimeId,
+          text: handoffRequest(pct, a.token),
+          display_kind: 'hidden'
         })
-        return
-      }
-      try {
-        // The asking chat's profile, captured with the request: he may have switched since.
-        host.newChat(a.profile || null)
-        // Marked only now, once the new chat has opened: a cancelled request leaves the chat unmarked.
-        markRelayed(a.storedId)
+        if (!live(a)) return
+        if (receipt?.status !== 'streaming') {
+          fail(
+            a,
+            'The hand-off request was not admitted as a new turn. Nothing will be retried automatically.'
+          )
+          return
+        }
+        a.userRowId = receipt.user_row_id || null
+        if (a.userRowId) ownRows[a.key] = [...(ownRows[a.key] || []), a.userRowId].slice(-100)
+        a.phase = 'waiting'
+        persist()
+        $relay.set({ phase: 'started', title: a.newTitle })
+        arm(a, Math.max(0, a.deadline - Date.now()))
+        if (a.earlyEvent) {
+          const e = a.earlyEvent
+          delete a.earlyEvent
+          await completeAttempt(a, e)
+        }
       } catch (e) {
-        $relay.set({ phase: 'idle', title: '' })
-        host.notifyError(e, 'Session relay: could not open a new chat.')
-        return
-      }
-      const trySubmit = attempt => {
-        let sent = false
-        try {
-          sent = host.composer.submit('new', note) === true
-        } catch (e) {
-          console.log('[session-relay] composer submit failed', e)
-        }
-        if (sent) {
-          host.notify({
-            kind: 'info',
-            message: a.newTitle
-              ? 'Session relay: "' + a.newTitle + '" starts with the hand-off note.'
-              : 'Session relay: the hand-off note went to the new chat.'
-          })
-          watchForSession(a.storedId, a.newTitle, noteMarker(note))
-          return
-        }
-        if (attempt < SEED_TRIES) {
-          ctx.setTimeout(() => trySubmit(attempt + 1), SEED_RETRY_MS)
-        } else {
-          $relay.set({ phase: 'idle', title: '' })
-          host.notify({
-            kind: 'warning',
-            message: 'Session relay: the new chat did not open. Copy the hand-off note from this chat, or press ⚡ to retry.'
-          })
-        }
-      }
-      ctx.setTimeout(() => trySubmit(0), 400)
-    }
-
-    async function relayNow(opts) {
-      // The lock is taken synchronously, before the first await: parallel
-      // triggers (message.complete + a chip re-render) would otherwise pass the
-      // check and submit the service message several times (duplicates).
-      if (inFlight) {
-        return
-      }
-      inFlight = true
-      try {
-        await relayRun(opts)
-      } finally {
-        inFlight = false
+        fail(a, 'Could not start: ' + String(e.message || e))
       }
     }
-
-    async function relayRun(opts) {
-      const manual = Boolean(opts && opts.manual)
-      const runtimeId = host.state.focusedSessionId.get()
-      const storedId = host.state.focusedStoredSessionId.get()
-      if (!runtimeId || !storedId) {
-        if (manual) {
-          host.notify({ kind: 'warning', message: 'Session relay: no active session.' })
-        }
-        return
-      }
-      // The not-yet reply's own completion schedules this check; it is skipped whatever else is
-      // happening, so a quick answer from him cannot be the turn that gets skipped instead.
-      if (!manual && deferred.delete(storedId)) {
-        return
-      }
-      if (awaiting) {
-        if (manual) {
-          host.notify({ kind: 'warning', message: 'Session relay: a hand-off is already being prepared.' })
-        }
-        return
-      }
-      if (isBusy(runtimeId)) {
-        if (manual) {
-          host.notify({ kind: 'warning', message: 'Session relay: the session is busy — retry after the reply.' })
-        }
-        return
-      }
-      const p = prefs.get()
-      if (!manual) {
-        if (!p.auto) {
-          return
-        }
-        if (readRelayed()[storedId]) {
-          return
-        }
-        if (pendingIds.has(storedId)) {
-          return
-        }
-        if (Date.now() - lastFailAt < 300000) {
-          return
-        }
-        if (Date.now() - (cancelledAt.get(storedId) || 0) < CANCEL_COOLDOWN_MS) {
-          return
-        }
-        const u = host.state.focusedUsage.get()
-        const measured = $pct.get()
-        const cheap =
-          measured != null ? measured : u && typeof u.context_percent === 'number' ? u.context_percent : null
-        if (cheap == null) {
-          if (Date.now() - lastProbeAt < 60000) {
-            return
-          }
-        } else if (cheap < p.threshold - 3) {
-          return
-        }
-      }
-
-      const pct = await precisePercent(runtimeId)
-      if (!manual) {
-        if (pct == null || pct < p.threshold) {
-          return
-        }
-        if (readRelayed()[storedId]) {
-          return
-        }
-      }
-      if (isBusy(runtimeId)) {
-        return
-      }
-
-      pendingIds.add(storedId)
-      $relay.set({ phase: 'working', title: '' })
+    function relayNow(opts) {
+      const a = capture()
+      if (a) void start(a, Boolean(opts?.manual), opts?.event)
+    }
+    async function seed(a) {
+      if (!live(a)) return
+      a.phase = 'creating'
+      persist()
+      cancelTimer(a)
       try {
-        let oldTitle = ''
-        try {
-          const res = await host.request('session.title', { session_id: runtimeId })
-          oldTitle = String((res && res.title) || '').trim()
-        } catch (e) {
-          console.log('[session-relay] title read failed', e)
-        }
-
-        const newTitle = nextTitle(oldTitle)
-        const msg = handoffRequest(pct)
-
-        const profileAtom = host.state.focusedSessionProfile
-        const profile = (profileAtom && profileAtom.get ? profileAtom.get() : '') || ''
-        awaiting = { runtimeId, storedId, newTitle, profile }
-        await host.request('prompt.submit', { session_id: runtimeId, text: msg, display_kind: 'hidden' })
-        console.log('[session-relay] relay started; new title=' + (newTitle || '(auto)'))
-        $relay.set({ phase: 'started', title: newTitle })
+        const child = await rpc(a, 'session.create', {
+          source: 'desktop',
+          hidden: false,
+          follow_profile_config: true,
+          idempotency_key: 'session-relay:' + a.id
+        })
+        if (!live(a)) return
+        if (!child.session_id || !child.stored_session_id)
+          throw Error('The gateway returned no exact successor identity.')
+        a.successor = { runtimeId: child.session_id, storedId: child.stored_session_id }
+        a.phase = 'seeding'
+        persist()
+        const before = await rpc(a, 'session.activate', { session_id: a.successor.runtimeId })
+        if (!live(a)) return
+        if (
+          before.running ||
+          isBusy(a.successor.runtimeId) ||
+          (before.messages || []).some((m) => m.role === 'user')
+        )
+          throw Error('The successor is no longer an empty idle chat.')
+        a.phase = 'seed-submitting'
+        persist()
+        const receipt = await rpc(a, 'prompt.submit', { session_id: a.successor.runtimeId, text: a.note })
+        if (!live(a)) return
+        if (receipt?.status !== 'streaming') throw Error('The successor did not admit the note.')
+        a.seedRowId = receipt.user_row_id
+        a.phase = 'confirming'
+        persist()
+        await confirmSuccessor(a)
+      } catch (e) {
+        fail(a, 'Could not confirm the successor: ' + String(e.message || e))
+      }
+    }
+    async function confirmSuccessor(a) {
+      const snap = await rpc(a, 'session.activate', { session_id: a.successor.runtimeId })
+      if (!live(a)) return
+      if (snap.session_key !== a.successor.storedId) throw Error('The successor identity changed.')
+      const first = (snap.messages || []).find((m) => m.role === 'user')
+      if (
+        !first ||
+        !Number.isInteger(first.row_id) ||
+        first.text !== a.note ||
+        (a.seedRowId && first.row_id !== a.seedRowId)
+      )
+        throw Error('The exact successor has no durable first-message confirmation.')
+      ctx.storage.set('relayed', { ...readRelayed(), [a.key]: Date.now() })
+      a.phase = 'confirmed'
+      persist()
+      await finishSuccessor(a)
+    }
+    async function finishSuccessor(a) {
+      if (!live(a)) return
+      let title = a.newTitle || 'new chat'
+      try {
+        if (a.newTitle) await rpc(a, 'session.title', { session_id: a.successor.storedId, title: a.newTitle })
+      } catch {
         host.notify({
           kind: 'info',
-          message: newTitle ? 'Session relay: writing the hand-off for "' + newTitle + '"…' : 'Session relay: writing the hand-off…'
+          message: 'Session relay: the successor exists, but its title could not be changed.'
         })
-        // A note that never arrives must not hold the relay forever. While the turn still runs it
-        // may be finishing the work, so it is left to finish and checked again; once it has
-        // stopped with no reply, the wait is released.
-        const watch = () => {
-          if (!awaiting || awaiting.storedId !== storedId) {
-            return
-          }
-          if (isBusy(runtimeId)) {
-            host.notify({ kind: 'warning', message: 'Session relay: the hand-off is taking long; it opens when the reply arrives.' })
-            ctx.setTimeout(watch, RECHECK_MS)
-            return
-          }
-          endWait(storedId, 'warning', 'Session relay: no hand-off arrived — press ⚡ to retry.')
-        }
-        ctx.setTimeout(watch, NOTE_TIMEOUT_MS)
-      } catch (e) {
-        awaiting = null
-        lastFailAt = Date.now()
-        $relay.set({ phase: 'idle', title: '' })
-        host.notifyError(e, 'Session relay: could not start.')
-      } finally {
-        pendingIds.delete(storedId)
+      }
+      if (!live(a)) return
+      try {
+        await host.openSession(a.successor.storedId, {
+          ...(typeof a.route === 'string' ? { profile: a.route } : { route: a.route }),
+          awaitHydration: true,
+          expectHistory: true
+        })
+        if (!live(a)) return
+        end(a, { message: 'Session relay ready: "' + title + '".', kind: 'success' })
+      } catch {
+        end(a, {
+          message:
+            'Session relay: the chat exists as "' +
+            title +
+            '" (' +
+            a.successor.storedId +
+            '), but could not be opened. Select it in the chat list.'
+        })
       }
     }
-
-    // The agent's reply to the service message IS the hand-off note.
-    ctx.onEvent('message.complete', event => {
-      const a = awaiting
-      if (!a || !event) {
+    async function completeAttempt(a, event) {
+      if (!live(a)) return
+      if (recovering.has(a.id) && !event.reconciled) {
+        a.recoveryEvent = event
         return
       }
-      const sessionId = event.session_id || (event.payload && event.payload.session_id) || ''
-      // The note must come from THIS chat's turn: an event with no session id is not a match.
-      if (sessionId !== a.runtimeId) {
+      if (a.phase === 'submitting') {
+        a.earlyEvent = event
         return
       }
-      const outcome = noteOutcome(event.payload)
-      if (outcome.kind === 'cancelled') {
-        endWait(
-          a.storedId,
-          'info',
-          'Session relay: hand-off cancelled. This chat still relays at the threshold; ⚡ starts one now.'
-        )
-        return
+      if (a.phase !== 'waiting') return
+      const p = event.payload || {}
+      const receipt = p.persisted_turn
+      if (a.userRowId && receipt?.user_row_id != null && receipt.user_row_id !== a.userRowId) return
+      // With no receipt, prove no visible human turn followed our hidden submit.
+      if (!(a.userRowId && receipt?.user_row_id)) {
+        try {
+          const snap = await rpc(a, 'session.activate', { session_id: a.runtimeId })
+          if (!live(a) || a.phase !== 'waiting') return
+          if (
+            (snap.messages || []).some(
+              (m) => m.role === 'user' && m.display_kind !== 'hidden' && m.row_id > a.baseline
+            )
+          )
+            return
+        } catch (e) {
+          fail(a, 'Could not correlate the hand-off reply.')
+          return
+        }
       }
-      if (outcome.kind === 'skip') {
-        return
-      }
+      if (!live(a) || a.phase !== 'waiting') return
+      const outcome = noteOutcome(p, a.token)
       if (outcome.kind === 'deferred') {
-        awaiting = null
-        deferred.add(a.storedId)
-        $relay.set({ phase: 'idle', title: '' })
-        host.notify({ kind: 'info', message: 'Session relay: hands off once the work is done.' })
+        end(a)
         return
       }
-      if (outcome.kind === 'refused') {
-        endWait(a.storedId, 'warning', outcome.note.split('\n')[0])
+      if (outcome.kind === 'empty') {
+        end(a, { message: 'Session relay: no hand-off arrived (the turn had no reply text).' })
         return
       }
-      openAndSeed(outcome.note)
+      if (outcome.kind !== 'note') {
+        end(a, {
+          pause: true,
+          message:
+            'Session relay: ' +
+            (outcome.kind === 'cancelled'
+              ? 'hand-off cancelled or failed.'
+              : 'no hand-off; the reply was refused or did not match this request.')
+        })
+        return
+      }
+      a.note = outcome.note
+      persist()
+      await seed(a)
+    }
+    function arm(a, ms) {
+      cancelTimer(a)
+      timers.set(
+        a.id,
+        ctx.setTimeout(async () => {
+          if (!live(a) || a.phase !== 'waiting') return
+          try {
+            const snap = await rpc(a, 'session.activate', { session_id: a.runtimeId })
+            if (!live(a) || a.phase !== 'waiting') return
+            if (snap.running || isBusy(a.runtimeId)) {
+              host.notify({
+                kind: 'warning',
+                message: 'Session relay: the hand-off is taking long; still waiting for this turn.'
+              })
+              a.deadline = Date.now() + RECHECK_MS
+              persist()
+              arm(a, RECHECK_MS)
+            } else end(a, { message: 'Session relay: no hand-off arrived — press ⚡ to retry.' })
+          } catch {
+            fail(a, 'Could not check the hand-off turn.')
+          }
+        }, ms)
+      )
+    }
+    function reset() {
+      generation++
+      ctx.storage.set('attemptGeneration', generation)
+      for (const a of attempts.values()) {
+        cancelTimer(a)
+        retained.get(a.id)?.()
+      }
+      retained.clear()
+      attempts.clear()
+      for (const map of [pauses, seen, ownRows]) for (const key of Object.keys(map)) delete map[key]
+      ctx.storage.remove('relayed')
+      persist()
+      $relay.set({ phase: 'idle', title: '' })
+      host.notify({ kind: 'info', message: 'Session relay: marks cleared.' })
+    }
+    ctx.onEvent('message.complete', (event) => {
+      const id = event?.session_id || event?.payload?.session_id
+      if (!id) return
+      const matches = [...attempts.values()].filter((a) => a.runtimeId === id)
+      if (matches.length) {
+        for (const a of matches) void completeAttempt(a, event)
+        return
+      }
+      // Backend restarts mint new runtime ids. Prove the mapping on each attempt's
+      // captured route; a focus change by itself is never an ownership receipt.
+      for (const a of attempts.values()) {
+        if (a.phase !== 'waiting') continue
+        void (async () => {
+          try {
+            const rows = await rpc(a, 'session.active_list')
+            if (!live(a) || a.phase !== 'waiting') return
+            const hits = (rows.sessions || []).filter((r) => r.session_key === a.storedId)
+            if (hits.length !== 1 || hits[0].id !== id) return
+            a.runtimeId = id
+            persist()
+            await completeAttempt(a, event)
+          } catch {
+            /* The attempt's deadline handles an unavailable backend. */
+          }
+        })()
+      }
+      if (event.payload?.status !== 'complete') return
+      const chat = readAtom('focusedSessionId') === id ? rememberFocus() : observedChats.get(id)
+      if (!chat) return // Never guess an unobserved background chat's owner.
+      const a = capture(chat.runtimeId, chat.storedId, chat.owner)
+      if (!a) return
+      timers.set(
+        a.id,
+        ctx.setTimeout(() => {
+          timers.delete(a.id)
+          if (live(a)) void start(a, false, event)
+        }, 0)
+      )
     })
+    async function restore() {
+      for (const saved of Object.values(ctx.storage.get('attempts', {}))) {
+        if (!saved?.id || !saved.key || saved.generation !== generation) continue
+        const a = attempts.get(saved.key)
+        if (!a || a.id !== saved.id) continue
+        recovering.add(a.id)
+        try {
+          a.route = await resolveRoute(a)
+          if (!live(a)) continue
+          if (host.retainProfile) {
+            const release = await host.retainProfile(a.route)
+            if (!live(a)) {
+              release()
+              continue
+            }
+            retained.set(a.id, release)
+          }
+          // Admission interrupted before submit is safe to discard, never replay.
+          if (a.phase === 'admitting') {
+            end(a)
+            continue
+          }
+          const remap = async (storedId) => {
+            const rows = await rpc(a, 'session.active_list')
+            if (!live(a)) return null
+            const hits = (rows.sessions || []).filter((r) => r.session_key === storedId)
+            if (hits.length > 1) throw Error('Ambiguous live session identity.')
+            if (hits.length === 1) return hits[0].id
+            const resumed = await rpc(a, 'session.resume', { session_id: storedId, lazy: true })
+            if (!live(a)) return null
+            return resumed.session_id
+          }
+          if (a.successor) {
+            a.successor.runtimeId = await remap(a.successor.storedId)
+            if (!live(a)) continue
+            persist()
+            if (a.phase === 'confirmed') await finishSuccessor(a)
+            else await confirmSuccessor(a) // Read/confirm only; never send the note twice.
+            continue
+          }
+          if (!['waiting', 'submitting'].includes(a.phase)) {
+            fail(
+              a,
+              'Reload interrupted successor creation; check the chat list. Nothing will be sent again automatically.'
+            )
+            continue
+          }
+          a.runtimeId = await remap(a.storedId)
+          if (!live(a)) continue
+          const snap = await rpc(a, 'session.activate', { session_id: a.runtimeId })
+          if (!live(a)) continue
+          if (snap.session_key !== a.storedId) throw Error('The asking chat identity changed.')
+          a.phase = 'waiting'
+          persist()
+          const after = (snap.messages || []).filter((m) => Number(m.row_id) > a.baseline)
+          // A human redirect makes history-only turn attribution unprovable.
+          if (after.some((m) => m.role === 'user' && m.display_kind !== 'hidden')) {
+            fail(
+              a,
+              'A human turn followed the request while disconnected; the reply cannot safely be attributed.'
+            )
+            continue
+          }
+          if (snap.running) {
+            arm(a, Math.max(0, a.deadline - Date.now()))
+            continue
+          }
+          const reply = [...after].reverse().find((m) => m.role === 'assistant')
+          if (reply)
+            await completeAttempt(a, {
+              reconciled: true,
+              payload: {
+                status: 'complete',
+                text: reply.text,
+                persisted_turn: a.userRowId ? { user_row_id: a.userRowId } : undefined
+              }
+            })
+          else end(a, { message: 'Session relay: no hand-off arrived while disconnected.' })
+        } catch (e) {
+          fail(a, 'Could not recover the hand-off: ' + String(e.message || e))
+        } finally {
+          recovering.delete(a.id)
+          const pending = a.recoveryEvent
+          delete a.recoveryEvent
+          if (pending && live(a) && a.phase === 'waiting') void completeAttempt(a, pending)
+        }
+      }
+    }
+    // Reserve all restored keys synchronously so a completion cannot start a second ask.
+    for (const saved of Object.values(ctx.storage.get('attempts', {}))) {
+      if (saved?.id && saved.generation === generation) {
+        attempts.set(saved.key, { ...saved })
+        recovering.add(saved.id)
+      }
+    }
+    void restore()
 
     function SettingsPage() {
+      useValue($relay) // Refresh confirmation and saved-note controls when an attempt ends.
       const p = useValue(prefs)
       const measured = useValue($pct)
       const u = useValue(host.state.focusedUsage)
       const storedId = useValue(host.state.focusedStoredSessionId)
       const streamed = u && typeof u.context_percent === 'number' ? u.context_percent : null
       const pct = measured != null ? measured : streamed
-      const marked = storedId ? Boolean(readRelayed()[storedId]) : false
+      const owner = readAtom('focusedSessionOwner', readAtom('focusedSessionProfile', readAtom('profile')))
+      const marked = storedId && owner ? Boolean(readRelayed()[chatKey(owner, storedId)]) : false
 
       return jsxs('div', {
         children: [
@@ -541,7 +719,7 @@ export default {
             label: 'Automatic relay',
             description:
               'When the session context reaches the threshold, the agent writes a hand-off note and the plugin opens a new chat with that note as its first message (the title number is incremented).',
-            onChange: on => update({ auto: on })
+            onChange: (on) => update({ auto: on })
           }),
           jsx(ListRow, {
             title: 'Trigger threshold',
@@ -549,7 +727,7 @@ export default {
               'Hermes compacts the history at about 50%; the threshold is kept below that so the relay fires before compaction.',
             action: jsx(SegmentedControl, {
               value: String(p.threshold),
-              onChange: v => update({ threshold: Number(v) }),
+              onChange: (v) => update({ threshold: Number(v) }),
               options: [
                 { id: '30', label: '30%' },
                 { id: '40', label: '40%' },
@@ -560,7 +738,10 @@ export default {
           }),
           jsx(ListRow, {
             title: 'Current state',
-            description: pct == null ? 'The active session context has not been measured yet.' : 'Active session context: ' + pct + '%.',
+            description:
+              pct == null
+                ? 'The active session context has not been measured yet.'
+                : 'Active session context: ' + pct + '%.',
             action: jsx('span', {
               className: 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-secondary)',
               children: marked ? 'relay already started' : 'relay not started yet'
@@ -572,17 +753,31 @@ export default {
             action: jsx(Button, {
               variant: 'secondary',
               size: 'sm',
-              onClick: () => {
-                ctx.storage.remove('relayed')
-                cancelledAt.clear()
-                deferred.clear()
-                awaiting = null
-                $relay.set({ phase: 'idle', title: '' })
-                host.notify({ kind: 'info', message: 'Session relay: marks cleared.' })
-              },
+              onClick: reset,
               children: 'Reset'
             })
-          })
+          }),
+          ...Object.entries(ctx.storage.get('savedNotes', {})).map(([key, saved]) =>
+            jsx(ListRow, {
+              title: 'Copy saved note',
+              description:
+                'Hand-off from ' + saved.storedId + '. Kept because successor confirmation failed.',
+              action: jsx(Button, {
+                variant: 'secondary',
+                size: 'sm',
+                children: 'Copy',
+                onClick: async () => {
+                  const copied = await ctx.os.writeClipboard(saved.note)
+                  host.notify({
+                    kind: copied ? 'info' : 'warning',
+                    message: copied
+                      ? 'Session relay: note copied. Paste it into a new chat under the original profile.'
+                      : 'Session relay: clipboard unavailable. Copy the reply in the old chat without its first protocol line.'
+                  })
+                }
+              })
+            })
+          )
         ]
       })
     }
@@ -591,33 +786,28 @@ export default {
       const p = useValue(prefs)
       const measured = useValue($pct)
       const u = useValue(host.state.focusedUsage)
-      const relay = useValue($relay)
       const runtimeId = useValue(host.state.focusedSessionId)
       const storedId = useValue(host.state.focusedStoredSessionId)
-      const busyMap = useValue(host.state.busyBySession)
-
+      const owner = useValue(host.state.focusedSessionOwner || host.state.focusedSessionProfile)
       const streamed = u && typeof u.context_percent === 'number' ? u.context_percent : null
       const pct = measured != null ? measured : streamed
-      const busyNow = Boolean(runtimeId && busyMap && busyMap[runtimeId] === true)
 
       useEffect(() => {
+        $pct.set(null)
         void refreshPct()
-      }, [runtimeId])
+      }, [runtimeId, storedId, owner?.connectionId, owner?.profile, typeof owner === 'string' ? owner : null])
 
-      useEffect(() => {
-        void relayNow({ manual: false })
-      }, [pct, runtimeId, storedId, p && p.auto, p && p.threshold, busyNow])
-
-      const working = relay.phase === 'working' || relay.phase === 'started'
+      // The chip measures only. Automatic admission belongs to completed human turns.
       const near = pct != null && p && pct >= p.threshold
-      const label = working ? '…' : pct == null ? '—' : pct + '%'
-      const tip = working
-        ? 'Session relay: writing the hand-off for "' + (relay.title || 'a new chat') + '"…'
-        : relay.phase === 'done'
-          ? 'Session relay already created: "' + relay.title + '".'
-          : pct == null
-            ? 'Session relay: context not measured yet. Click to start a relay manually.'
-            : 'Session relay — context ' + pct + '%. Auto threshold ' + (p ? p.threshold : '?') + '%. Click to start manually.'
+      const label = pct == null ? '—' : pct + '%'
+      const tip =
+        pct == null
+          ? 'Session relay: context not measured yet. Click to start a relay manually.'
+          : 'Session relay — context ' +
+            pct +
+            '%. Auto threshold ' +
+            (p ? p.threshold : '?') +
+            '%. Click to start manually.'
 
       return jsx(Tip, {
         label: tip,
@@ -632,10 +822,7 @@ export default {
             haptic('tap')
             void relayNow({ manual: true })
           },
-          children: [
-            jsx('span', { 'aria-hidden': true, children: '⚡' }),
-            jsx('span', { children: label })
-          ]
+          children: [jsx('span', { 'aria-hidden': true, children: '⚡' }), jsx('span', { children: label })]
         })
       })
     }
@@ -647,14 +834,6 @@ export default {
       ctx.setTimeout(tickPct, PCT_REFRESH_MS)
     }
     ctx.setTimeout(tickPct, 1200)
-
-    // Additional trigger: check the threshold after any turn completes.
-    ctx.onEvent('message.complete', () => {
-      ctx.setTimeout(() => {
-        void refreshPct()
-        void relayNow({ manual: false })
-      }, 2500)
-    })
 
     if (ctx.registerSettingsPage) {
       ctx.registerSettingsPage({

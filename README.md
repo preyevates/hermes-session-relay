@@ -4,26 +4,19 @@
 
 **Hand your long-running chat over to a fresh session before the context window fills up.**
 
-> **Fork note (`estate/handoff-skill`).** This branch is Session Relay 0.4.0 with one change: the
-> hand-off request asks the agent to write the hand-off with the `hermes-optimize-handoff` skill
-> (its template, then its `check` until it passes) and to send the prompt that check prints as the
-> note, instead of a free-form note. The agent first finishes the work in hand; when that needs
-> the user's answer it replies `Session Relay: not yet:`, and the relay asks again after the
-> user's next reply. A reply that starts `Session Relay: no hand-off:` shows a
-> warning and opens no new chat. A chat is marked relayed only once its new chat opens; a
-> cancelled hand-off ends the wait at once, leaves the chat unmarked and pauses its automatic
-> relay for 15 minutes (⚡ and Reset marks still work). Everything else is upstream's. Upstream:
-> [ikuro4kin-dev/hermes-session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay).
+> **Fork note (`estate/handoff-skill`, estate.5).** Desktop tracks persisted, owner-qualified attempts, not the focused chat: only a completed human turn above the threshold (or ⚡ at any level) asks once. The agent finishes existing work, runs `hermes-optimize-handoff`'s check, and replies with exactly `Session Relay <token> hand-off` plus the check's prompt, `Session Relay <token> not yet: <what is needed>`, or `Session Relay <token> no hand-off: <reason>`; one whole-reply code fence is allowed. Anything else opens nothing. Not-yet waits silently for the next human completion; refusal, cancellation and failure pause that chat for 15 minutes. The successor is created and seeded through its captured owner, confirmed by exact durable first-message identity, then marked, titled and opened; no composer/draft or recent-row fallback is used. Attempts and pauses survive reloads, Reset invalidates in-flight work, and missing skills skip automatic requests. See [host contract and limits](docs/host-contract.md). Upstream: [ikuro4kin-dev/hermes-session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay).
+>
+> **Gateway limits (watchdog off by default).** G2/G3 are fixed: an active turn keeps its note past the nominal deadline, and an invalid note cannot authorize reset. G1 remains: opt-in watchdog reset uses a stale idle snapshot and can interrupt new work. G4 remains (Frasier-approved scope): carry is consumed before authorization/durable admission, so shared-thread denial or failed ingress can lose it. G5 remains: `plugins.isolation=host` cannot expose the live runner/store used by gateway carry/watchdog. Do not enable the watchdog for this build or weaken isolation to bypass this limitation. Gateway request wording uses the same finish-first/token protocol, but its legacy tool/carry/web mechanism is not the Desktop attempt engine and has no promise of Desktop deferral/recovery parity.
 
 Hermes compacts a conversation when its context reaches ~50% of the model window. Compaction keeps a summary and drops details; after two or three compactions a long working session turns into a soup of half-remembered facts and duplicated messages. Session Relay solves the same problem the other way round: as the context approaches the threshold, the agent writes a hand-off note and opens a **new chat** that starts with that note — while the old chat stays untouched and readable.
 
 ## How it works
 
-1. The desktop half watches the focused session's context usage.
-2. When usage crosses the threshold (45% by default) and the current turn has finished, it submits a **hidden service message**: the agent replies with a hand-off note (current task, state, what was done, next step, important details).
-3. The plugin opens a new chat through the SDK (`host.newChat()`) and submits the note into it (`host.composer.submit('new', note)`) — the fresh session starts with the hand-off as its first user message, exactly as if you had typed it.
-4. The new chat is named after the current one with the number incremented — `Bugfix-6` → `Bugfix-7`.
-5. A toast and an OS notification announce the new chat; clicking the notification opens it.
+1. The desktop half displays context usage without starting work from the gauge.
+2. After a completed human turn above the threshold (45% by default), it submits one **hidden service message** with a per-attempt token. The reply must follow the fork protocol above.
+3. The plugin uses owner-routed `session.create` and `prompt.submit` to seed the exact successor, verifies its durable first user message, then calls `host.openSession` on that exact stored id. It never types into a draft.
+4. Only that successor is titled with the old title's number incremented — `Bugfix-6` → `Bugfix-7`.
+5. A toast announces the new chat or explains where to copy a retained note after a failed confirmation.
 6. The ⚡ chip in the status bar starts a relay manually, below the threshold too.
 
 Nothing is deleted: the previous session remains in the sidebar as the full record.
@@ -32,8 +25,8 @@ On channels outside the desktop app (Telegram and other messaging platforms) the
 
 ## Requirements
 
-- **Hermes Agent 0.22.0 or newer**, with the Desktop app (`apps/desktop`) and/or the gateway.
-- No agent tool is required: the desktop half opens and seeds the new chat through the plugin SDK (`host.newChat`, `host.composer`), and the gateway half ships its own `session_relay_handoff` tool.
+- **Desktop contract verified at Hermes v0.23.0, `2bd378ed1b`**; the gateway half retains its upstream compatibility scope.
+- No agent tool is required by Desktop: it uses public owner-routed SDK calls (`requestProfile`, `profileRoutes`, `retainProfile`, `openSession`). The gateway half ships its own `session_relay_handoff` tool.
 
 ## Package layout
 

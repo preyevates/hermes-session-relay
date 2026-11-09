@@ -1,158 +1,102 @@
-/**
- * Tests for the desktop half's hand-off request (estate fork).
- *
- * The request asks the agent to write the hand-off with the hand-off skill and
- * reply with the prompt its check printed. The helpers are lifted out of
- * desktop/plugin.js the same way as in desktop_find_fresh_session.mjs.
- *
- * Run: node tests/desktop_handoff_request.mjs
- */
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+// The old source-substring tests are now whole-plugin request/protocol events.
 import assert from 'node:assert/strict'
-
-const here = dirname(fileURLToPath(import.meta.url))
-const source = readFileSync(join(here, '..', 'desktop', 'plugin.js'), 'utf8')
-
-function lift(name) {
-  const start = source.indexOf('function ' + name + '(')
-  assert.ok(start >= 0, `function ${name} not found in desktop/plugin.js`)
-  let depth = 0
-  let i = source.indexOf('{', start)
-  for (; i < source.length; i += 1) {
-    const ch = source[i]
-    if (ch === '{') depth += 1
-    else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) {
-        i += 1
-        break
-      }
-    }
-  }
-  return source.slice(start, i).replace(/^function /, '')
-}
-
-function constant(name) {
-  const m = source.match(new RegExp('^const ' + name + " = '([^']*)'$", 'm'))
-  assert.ok(m, `const ${name} not found in desktop/plugin.js`)
-  return m[1]
-}
-
-const NO_HANDOFF = constant('NO_HANDOFF')
-const NOT_YET = constant('NOT_YET')
-const HANDOFF_SKILL = constant('HANDOFF_SKILL')
-const handoffRequest = new Function(
-  'NO_HANDOFF',
-  'NOT_YET',
-  'HANDOFF_SKILL',
-  'return function handoffRequest' + lift('handoffRequest')
-)(NO_HANDOFF, NOT_YET, HANDOFF_SKILL)
-// The lifted bodies are the plugin's own shipped source, as in desktop_find_fresh_session.mjs.
-const unfence = new Function('return function unfence' + lift('unfence'))()
-const noteOutcome = new Function(
-  'NO_HANDOFF',
-  'NOT_YET',
-  'unfence',
-  'return function noteOutcome' + lift('noteOutcome')
-)(NO_HANDOFF, NOT_YET, unfence)
-
+import { rig } from './attempt_host.mjs'
 let passed = 0
-function check(name, fn) {
-  fn()
-  passed += 1
-  console.log('ok  ' + name)
+async function check(name, fn) {
+  await fn()
+  passed++
+  console.log('PASS ' + name)
 }
-
-check('the request names the hand-off skill and its check', () => {
-  const msg = handoffRequest(46)
-  assert.ok(msg.includes('`hermes-optimize-handoff`'))
-  assert.ok(msg.includes('check'))
-  assert.ok(msg.includes('`prompt`'))
-  assert.ok(msg.includes('46%'))
+await check('request names skill, check, prompt, percentage', async () => {
+  const r = rig()
+  await r.human()
+  for (const s of ['hermes-optimize-handoff', 'check', '`prompt`', '50%'])
+    assert.ok(r.log.submits[0].text.includes(s))
 })
-
-check('the request no longer forbids tools: writing the hand-off needs them', () => {
-  assert.ok(!/no tools/i.test(handoffRequest(50)))
+await check('tools allowed; finish then commit/push then skill', async () => {
+  const r = rig()
+  await r.human()
+  const t = r.log.submits[0].text
+  assert.ok(!/no tools|do not start or continue/i.test(t))
+  assert.ok(t.includes('commit and push'))
+  assert.ok(t.indexOf('First finish') < t.indexOf('Then load'))
 })
-
-check('the request tells the agent how to report a hand-off that cannot pass', () => {
-  assert.ok(handoffRequest(null).includes('"' + NO_HANDOFF + ':"'))
-  assert.ok(handoffRequest(null).includes('—'))
+await check('request carries all three token-bound first lines', async () => {
+  const r = rig()
+  await r.human()
+  for (const s of [' hand-off', ' not yet:', ' no hand-off:'])
+    assert.ok(r.log.submits[0].text.includes('Session Relay ' + r.token() + s))
 })
-
-check('the old free-form note request is gone from the desktop half', () => {
-  assert.ok(!source.includes('Write the hand-off note that will continue this work'))
+await check('unknown context manual request uses dash', async () => {
+  const r = rig()
+  const orig = r.host.request
+  r.host.request = (m, p) => (m === 'session.context_breakdown' ? Promise.resolve({}) : orig(m, p))
+  await r.manual()
+  assert.ok(r.log.submits[0].text.includes('—'))
 })
-
-check('a reply wrapped in one code block is unwrapped', () => {
-  assert.equal(unfence('```text\nMode: build. Take up the work.\nDone when: x\n```'), 'Mode: build. Take up the work.\nDone when: x')
-  assert.equal(unfence('  ```\nOne line.\n```  '), 'One line.')
+await check('whole code fence removed', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('```text\nSession Relay <token> hand-off\nMode: build.\n```')
+  assert.equal(r.log.submits[1].text, 'Mode: build.')
 })
-
-check('a plain reply, or one with a code block inside, is left as it is', () => {
-  assert.equal(unfence('Mode: build.\n```\ncode\n```\nMore.'), 'Mode: build.\n```\ncode\n```\nMore.')
-  assert.equal(unfence('  Plain prompt.  '), 'Plain prompt.')
-  assert.equal(unfence(null), '')
+await check('internal code fence in prompt preserved', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('Session Relay <token> hand-off\nMode: build.\n```\ncode\n```\nMore.')
+  assert.equal(r.log.submits[1].text, 'Mode: build.\n```\ncode\n```\nMore.')
 })
-
-check('a failure reply is recognised by its opening words', () => {
-  assert.ok((NO_HANDOFF + ': the check failed twice').startsWith(NO_HANDOFF))
-  assert.ok(source.includes('note.startsWith(NO_HANDOFF)'))
+await check('exact refusal opens nothing', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('Session Relay <token> no hand-off: check failed')
+  assert.equal(r.log.creates.length, 0)
 })
-
-check('a cancelled or failed turn ends the wait instead of being skipped', () => {
-  assert.equal(noteOutcome({ status: 'interrupted', text: 'Operation interrupted' }).kind, 'cancelled')
-  assert.equal(noteOutcome({ status: 'failed', text: '' }).kind, 'cancelled')
+for (const status of ['interrupted', 'failed'])
+  await check(status + ' ends wait and pauses', async () => {
+    const r = rig()
+    await r.human()
+    await r.reply('', status)
+    assert.equal(Object.keys(r.store.get('attempts')).length, 0)
+    assert.equal(Object.keys(r.store.get('pauses')).length, 1)
+  })
+await check('empty reply releases without pause', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('')
+  assert.equal(Object.keys(r.store.get('attempts')).length, 0)
+  assert.equal(Object.keys(r.store.get('pauses')).length, 0)
 })
-
-check('a finished reply is the note; an empty one is skipped; a refusal opens no chat', () => {
-  assert.deepEqual(noteOutcome({ status: 'complete', text: '```\nMode: build.\n```' }), { kind: 'note', note: 'Mode: build.' })
-  assert.deepEqual(noteOutcome({ text: 'Mode: build.' }), { kind: 'note', note: 'Mode: build.' })
-  assert.equal(noteOutcome({ status: 'complete', text: '  ' }).kind, 'skip')
-  assert.equal(noteOutcome(null).kind, 'skip')
-  assert.equal(noteOutcome({ status: 'complete', text: NO_HANDOFF + ': check failed' }).kind, 'refused')
+await check('mark absent until confirmed seed', async () => {
+  const r = rig()
+  await r.human()
+  assert.equal(Object.keys(r.store.get('relayed') || {}).length, 0)
+  await r.reply('Session Relay <token> hand-off\nNote')
+  assert.equal(Object.keys(r.store.get('relayed')).length, 1)
 })
-
-check('a chat is marked relayed only once its new chat has opened, never when the request is sent', () => {
-  const submit = source.indexOf("host.request('prompt.submit'")
-  const nextLines = source.slice(submit, source.indexOf('\n', source.indexOf('\n', submit) + 1))
-  assert.ok(!nextLines.includes('markRelayed'))
-  assert.equal(source.split('markRelayed(').length - 1, 1) // one call (defined as `markRelayed = id =>`)
-  const open = source.indexOf('host.newChat(a.profile || null)')
-  assert.ok(source.slice(open, open + 200).includes('markRelayed(a.storedId)'))
+await check('pause is 15 minutes and reset clears it', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('Session Relay <token> no hand-off: nope')
+  const deadline = Object.values(r.store.get('pauses'))[0]
+  assert.ok(deadline > Date.now() + 14 * 60000 && deadline <= Date.now() + 15 * 60000)
+  r.reset()
+  assert.equal(Object.keys(r.store.get('pauses')).length, 0)
 })
-
-check('after a cancel the automatic relay pauses 15 minutes; the manual reset stays', () => {
-  assert.ok(source.includes('const CANCEL_COOLDOWN_MS = 15 * 60000'))
-  assert.ok(source.includes('cancelledAt.get(storedId) || 0) < CANCEL_COOLDOWN_MS'))
-  assert.ok(source.includes("ctx.storage.remove('relayed')"))
-  assert.ok(source.includes('cancelledAt.clear()'))
+await check('not yet no warning, pause or chat', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('Session Relay <token> not yet: approval')
+  assert.equal(r.log.notes.length, 0)
+  assert.equal(Object.keys(r.store.get('pauses')).length, 0)
+  assert.equal(r.log.creates.length, 0)
 })
-
-check('the request lets the work in hand finish first, and never says stop now', () => {
-  const msg = handoffRequest(50)
-  assert.ok(!/do not start or continue/i.test(msg))
-  assert.ok(msg.includes('First finish the work in hand'))
-  assert.ok(msg.indexOf('First finish') < msg.indexOf('Then load the skill'))
-  assert.ok(msg.includes('"' + NOT_YET + ':"'))
+await check('reset invalidates waiting attempt', async () => {
+  const r = rig()
+  await r.human()
+  const token = r.token()
+  r.reset()
+  await r.complete('rA', `Session Relay ${token} hand-off\nOld note`)
+  assert.equal(r.log.creates.length, 0)
 })
-
-check('a "not yet" reply defers: no chat, no pause, asked again after his next reply', () => {
-  assert.equal(noteOutcome({ status: 'complete', text: NOT_YET + ': needs his Onward' }).kind, 'deferred')
-  const d = source.indexOf("outcome.kind === 'deferred'")
-  const branch = source.slice(d, source.indexOf("outcome.kind === 'refused'", d))
-  assert.ok(branch.includes('deferred.add(a.storedId)'))
-  assert.ok(!branch.includes('endWait') && !branch.includes('cancelledAt') && !branch.includes('openAndSeed'))
-  assert.ok(source.includes('if (!manual && deferred.delete(storedId)) {'))
-})
-
-check('Reset marks also clears a deferral and a stuck wait', () => {
-  assert.ok(source.includes('deferred.clear()'))
-  const reset = source.indexOf("ctx.storage.remove('relayed')")
-  assert.ok(source.slice(reset, reset + 300).includes('awaiting = null'))
-})
-// Timeouts, deferrals and profiles are proven by events in desktop_relay_events.mjs.
-
-console.log(`\n${passed} checks, 0 failures`)
+console.log(`${passed} passed, 0 failed`)
