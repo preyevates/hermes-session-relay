@@ -126,7 +126,7 @@ await test('F11 unrelated recent row never renamed', async () => {
   await r.advance(5000)
   assert.deepEqual(
     r.log.titles.map((t) => t[0]),
-    [r.log.creates[0].stored]
+    [r.log.creates[0].id] // session.title is runtime-scoped in the host
   )
 })
 await test('sound cancellation pauses chat', async () => {

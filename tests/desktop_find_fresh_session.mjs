@@ -21,7 +21,7 @@ for (const source of ['local', 'unknown', 'desktop', 'gui', 'cron', 'subagent', 
   assert.equal(r.log.opens[0].id, r.log.creates[0].stored)
   assert.deepEqual(
     r.log.titles.map((t) => t[0]),
-    [r.log.creates[0].stored]
+    [r.log.creates[0].id] // session.title is runtime-scoped in the host
   )
   assert.equal(
     r.log.requests.some((r) => r.method === 'session.list'),

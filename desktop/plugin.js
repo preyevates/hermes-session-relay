@@ -53,7 +53,7 @@ function nextTitle(raw) {
   return m[1].slice(0, Math.max(0, TITLE_LIMIT - suffix.length)) + suffix
 }
 function unfence(reply) {
-  const t = String(reply || '').replace(/\r\n/g, '\n')
+  const t = String(reply || '').replace(/\r\n/g, '\n').replace(/\s+$/, '')
   const m = t.match(/^```[^\n]*\n([\s\S]*?)\n```$/)
   return m ? m[1] : t
 }
@@ -64,17 +64,18 @@ function noteOutcome(payload, token) {
   if (!text.trim()) return { kind: 'empty' }
   const [line, ...rest] = text.split('\n')
   const prefix = 'Session Relay ' + token
-  if (line === prefix + ' hand-off' && rest.join('\n').trim()) return { kind: 'note', note: rest.join('\n') }
+  const body = rest.join('\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, '')
+  if (line === prefix + ' hand-off' && body) return { kind: 'note', note: body }
   if (
     line.startsWith(prefix + ' not yet: ') &&
     line.slice((prefix + ' not yet: ').length).trim() &&
-    !rest.length
+    !rest.join('').trim()
   )
     return { kind: 'deferred' }
   if (
     line.startsWith(prefix + ' no hand-off: ') &&
     line.slice((prefix + ' no hand-off: ').length).trim() &&
-    !rest.length
+    !rest.join('').trim()
   )
     return { kind: 'refused' }
   return { kind: 'invalid' }
@@ -212,6 +213,7 @@ export default {
         runtimeId,
         storedId,
         owner,
+        cwd: String(readAtom('cwd', '') || ''),
         key,
         phase: 'admitting',
         startedAt: Date.now(),
@@ -394,6 +396,7 @@ export default {
           source: 'desktop',
           hidden: false,
           follow_profile_config: true,
+          ...(a.cwd ? { cwd: a.cwd, cwd_explicit: true } : {}),
           idempotency_key: 'session-relay:' + a.id
         })
         if (!live(a)) return
@@ -420,6 +423,16 @@ export default {
         persist()
         await confirmSuccessor(a)
       } catch (e) {
+        if (a.phase === 'confirming') {
+          // The successor accepted the note; only the read-back failed. Not marked (unconfirmed),
+          // but paused so no second successor is made while he looks.
+          end(a, {
+            pause: true,
+            kind: 'warning',
+            message: 'Session relay: the new chat accepted the note and should be working on it; find it in the sidebar.'
+          })
+          return
+        }
         fail(a, 'Could not confirm the successor: ' + String(e.message || e))
       }
     }
@@ -431,7 +444,7 @@ export default {
       if (
         !first ||
         !Number.isInteger(first.row_id) ||
-        first.text !== a.note ||
+        String(first.text || '').trim() !== a.note.trim() ||
         (a.seedRowId && first.row_id !== a.seedRowId)
       )
         throw Error('The exact successor has no durable first-message confirmation.')
@@ -444,8 +457,9 @@ export default {
       if (!live(a)) return
       let title = a.newTitle || 'new chat'
       try {
-        if (a.newTitle) await rpc(a, 'session.title', { session_id: a.successor.storedId, title: a.newTitle })
+        if (a.newTitle) await rpc(a, 'session.title', { session_id: a.successor.runtimeId, title: a.newTitle })
       } catch {
+        title = 'new chat'
         host.notify({
           kind: 'info',
           message: 'Session relay: the successor exists, but its title could not be changed.'
