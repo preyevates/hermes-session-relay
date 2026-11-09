@@ -7,7 +7,9 @@
 > **Fork note (`estate/handoff-skill`).** This branch is Session Relay 0.4.0 with one change: the
 > hand-off request asks the agent to write the hand-off with the `hermes-optimize-handoff` skill
 > (its template, then its `check` until it passes) and to send the prompt that check prints as the
-> note, instead of a free-form note. A reply that starts `Session Relay: no hand-off:` shows a
+> note, instead of a free-form note. The agent first finishes the work in hand; when that needs
+> the user's answer it replies `Session Relay: not yet:`, and the relay asks again after the
+> user's next reply. A reply that starts `Session Relay: no hand-off:` shows a
 > warning and opens no new chat. A chat is marked relayed only once its new chat opens; a
 > cancelled hand-off ends the wait at once, leaves the chat unmarked and pauses its automatic
 > relay for 15 minutes (⚡ and Reset marks still work). Everything else is upstream's. Upstream:

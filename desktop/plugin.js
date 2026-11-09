@@ -34,10 +34,14 @@ import { useEffect } from 'react'
 const ID = 'session-relay'
 const TITLE_LIMIT = 40
 const DEFAULTS = { auto: true, threshold: 45 }
-// Writing the hand-off, committing its records and passing its check takes tool calls.
-const NOTE_TIMEOUT_MS = 1200000
+// Finishing the work in hand, writing the hand-off and passing its check takes tool calls.
+// When this passes, the chip warns once; a reply that still arrives is used.
+const NOTE_TIMEOUT_MS = 1800000
 // The agent's reply when it could not produce a hand-off: shown, never seeded.
 const NO_HANDOFF = 'Session Relay: no hand-off'
+// The agent's reply when the work in hand cannot finish without his answer: the
+// relay asks again after his next reply, with no pause and no warning.
+const NOT_YET = 'Session Relay: not yet'
 const HANDOFF_SKILL = 'hermes-optimize-handoff'
 // After a cancelled or refused hand-off, the automatic relay leaves that chat alone this long
 // (the gateway half's _AUTO_CANCEL_COOLDOWN_S). The ⚡ button is never held back.
@@ -48,10 +52,12 @@ function handoffRequest(pct) {
   return [
     '[Session Relay plugin — service message]',
     'Context usage in this session: ' + (pct == null ? '—' : pct + '%') + '.',
-    'Hand this work to a fresh session now. Do not start or continue any other work.',
-    'Load the skill `' + HANDOFF_SKILL + '` and follow its Procedure: put the lasting results in their homes, write the hand-off from its template, and run its `check` until it exits 0.',
+    'Time to hand this work to a fresh session. Do not start new work.',
+    'First finish the work in hand, if it can finish without his answer: complete it, then commit and push what it changed.',
+    'If it cannot finish without his answer, reply with one line that starts "' + NOT_YET + ':" and names what you need from him; the plugin asks again after his next reply.',
+    'Then load the skill `' + HANDOFF_SKILL + '` and follow its Procedure: put the lasting results in their homes, write the hand-off from its template, and run its `check` until it exits 0.',
     'Your WHOLE reply is the `prompt` the check printed, exactly as printed: no code block around it, nothing before or after it. The plugin opens the new chat itself and sends your reply there as its first message.',
-    'If the check cannot pass, reply with one line that starts "' + NO_HANDOFF + ':" and names what stops it; no new chat is opened.'
+    'If the check cannot pass for another reason, reply with one line that starts "' + NO_HANDOFF + ':" and names what stops it; no new chat is opened.'
   ].join('\n')
 }
 const SEED_TRIES = 40
@@ -98,6 +104,9 @@ function noteOutcome(payload) {
   const note = unfence(p.text || p.content || '')
   if (!note) {
     return { kind: 'skip' }
+  }
+  if (note.startsWith(NOT_YET)) {
+    return { kind: 'deferred', note }
   }
   if (note.startsWith(NO_HANDOFF)) {
     return { kind: 'refused', note }
@@ -152,6 +161,9 @@ export default {
     let awaiting = null
     // storedId -> when its hand-off was cancelled, refused or never arrived.
     const cancelledAt = new Map()
+    // storedIds whose hand-off waits for his next reply: the deferral's own completed
+    // turn triggers one automatic check, which this skips.
+    const deferred = new Set()
 
     /** End the wait without opening a chat; the chat stays unmarked and pauses its automatic relay. */
     const endWait = (storedId, kind, message) => {
@@ -383,6 +395,9 @@ export default {
         if (!p.auto) {
           return
         }
+        if (deferred.delete(storedId)) {
+          return
+        }
         if (readRelayed()[storedId]) {
           return
         }
@@ -445,8 +460,9 @@ export default {
         })
         // A note that never arrives must not leave the chip spinning forever.
         ctx.setTimeout(() => {
+          // Warn only: the turn may still be finishing the work, and its reply is still used.
           if (awaiting && awaiting.storedId === storedId) {
-            endWait(storedId, 'warning', 'Session relay: no hand-off note arrived — press ⚡ to retry.')
+            host.notify({ kind: 'warning', message: 'Session relay: the hand-off is taking long; it opens when the reply arrives.' })
           }
         }, NOTE_TIMEOUT_MS)
       } catch (e) {
@@ -480,6 +496,13 @@ export default {
         return
       }
       if (outcome.kind === 'skip') {
+        return
+      }
+      if (outcome.kind === 'deferred') {
+        awaiting = null
+        deferred.add(a.storedId)
+        $relay.set({ phase: 'idle', title: '' })
+        host.notify({ kind: 'info', message: 'Session relay: hands off once the work is done.' })
         return
       }
       if (outcome.kind === 'refused') {
@@ -539,6 +562,9 @@ export default {
               onClick: () => {
                 ctx.storage.remove('relayed')
                 cancelledAt.clear()
+                deferred.clear()
+                awaiting = null
+                $relay.set({ phase: 'idle', title: '' })
                 host.notify({ kind: 'info', message: 'Session relay: marks cleared.' })
               },
               children: 'Reset'

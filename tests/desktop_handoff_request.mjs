@@ -41,19 +41,22 @@ function constant(name) {
 }
 
 const NO_HANDOFF = constant('NO_HANDOFF')
+const NOT_YET = constant('NOT_YET')
 const HANDOFF_SKILL = constant('HANDOFF_SKILL')
 const handoffRequest = new Function(
   'NO_HANDOFF',
+  'NOT_YET',
   'HANDOFF_SKILL',
   'return function handoffRequest' + lift('handoffRequest')
-)(NO_HANDOFF, HANDOFF_SKILL)
+)(NO_HANDOFF, NOT_YET, HANDOFF_SKILL)
 // The lifted bodies are the plugin's own shipped source, as in desktop_find_fresh_session.mjs.
 const unfence = new Function('return function unfence' + lift('unfence'))()
 const noteOutcome = new Function(
   'NO_HANDOFF',
+  'NOT_YET',
   'unfence',
   'return function noteOutcome' + lift('noteOutcome')
-)(NO_HANDOFF, unfence)
+)(NO_HANDOFF, NOT_YET, unfence)
 
 let passed = 0
 function check(name, fn) {
@@ -126,6 +129,30 @@ check('after a cancel the automatic relay pauses 15 minutes; the manual reset st
   assert.ok(source.includes('cancelledAt.get(storedId) || 0) < CANCEL_COOLDOWN_MS'))
   assert.ok(source.includes("ctx.storage.remove('relayed')"))
   assert.ok(source.includes('cancelledAt.clear()'))
+})
+
+check('the request lets the work in hand finish first, and never says stop now', () => {
+  const msg = handoffRequest(50)
+  assert.ok(!/do not start or continue/i.test(msg))
+  assert.ok(msg.includes('First finish the work in hand'))
+  assert.ok(msg.indexOf('First finish') < msg.indexOf('Then load the skill'))
+  assert.ok(msg.includes('"' + NOT_YET + ':"'))
+})
+
+check('a "not yet" reply defers: no chat, no pause, asked again after his next reply', () => {
+  assert.equal(noteOutcome({ status: 'complete', text: NOT_YET + ': needs his Onward' }).kind, 'deferred')
+  const d = source.indexOf("outcome.kind === 'deferred'")
+  const branch = source.slice(d, source.indexOf("outcome.kind === 'refused'", d))
+  assert.ok(branch.includes('deferred.add(a.storedId)'))
+  assert.ok(!branch.includes('endWait') && !branch.includes('cancelledAt') && !branch.includes('openAndSeed'))
+  assert.ok(source.includes('if (deferred.delete(storedId)) {'))
+})
+
+check('a slow hand-off only warns; its reply still opens the chat', () => {
+  const t = source.indexOf('}, NOTE_TIMEOUT_MS)')
+  const body = source.slice(source.lastIndexOf('ctx.setTimeout(() => {', t), t)
+  assert.ok(!body.includes('endWait'))
+  assert.ok(source.includes('deferred.clear()'))
 })
 
 console.log(`\n${passed} checks, 0 failures`)
