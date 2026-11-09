@@ -285,6 +285,43 @@ web_calls.clear()
 ctxw4, callsw4 = run(cfg_web, Store([Entry("agent:main:api_server:dm:sid22", "sid22", "api_server")]), log)
 check("web: an old mark blocks a second wake turn", web_calls == [] and callsw4 == [])
 
+# G2: timeout must not discard an issued request while its route is busy.
+fresh_state()
+note_busy = mod._pending_path("sidbusy")
+note_busy.parent.mkdir(parents=True, exist_ok=True)
+note_busy.write_text(json.dumps({"session_id": "sidbusy", "text": "fresh", "created_at": time.time()}), encoding="utf-8")
+mod._save_auto_state({"sidbusy": {"stage": "triggered", "ts": time.time() - mod._AUTO_TRIGGER_TIMEOUT_S - 1, "route": "routebusy"}})
+busy_store = Store([Entry("routebusy", "sidbusy", "telegram")])
+busy_runner = Runner(busy_store)
+busy_runner._running_agents = {"routebusy": object()}
+mod._gateway_runner = lambda: busy_runner
+mod._agent_log_path = lambda: log
+mod._auto_tick(Ctx(BASE))
+check("timed-out busy trigger keeps note and state", note_busy.exists() and "sidbusy" in mod._load_auto_state())
+
+# G3: only a valid, fresh note for this session may authorize reset.
+fresh_state()
+bad_note = mod._pending_path("sidbad")
+bad_note.parent.mkdir(parents=True, exist_ok=True)
+bad_note.write_text("{broken", encoding="utf-8")
+mod._save_auto_state({"sidbad": {"stage": "triggered", "ts": time.time() - 1, "route": "routebad"}})
+bad_calls = []
+mod._gateway_runner = lambda: Runner(Store([Entry("routebad", "sidbad", "telegram")]))
+mod._agent_log_path = lambda: log
+mod._schedule_reset = lambda runner, entry: bad_calls.append(entry.session_key) or True
+mod._auto_tick(Ctx(BASE))
+check("malformed note does not authorize reset", bad_calls == [])
+
+for template in (mod._AUTO_TRIGGER_TEXT, mod._AUTO_WEB_TRIGGER_TEXT):
+    request = template.format(pct=46, token="abc123")
+    check("request finishes work before skill and uses token protocol", (
+        "First finish the work in hand" in request
+        and "commit and push" in request
+        and "Do not start or continue" not in request
+        and request.index("First finish") < request.index("Load the skill")
+        and all("Session Relay abc123 " + suffix in request for suffix in ("hand-off", "not yet:", "no hand-off:"))
+    ))
+
 failed = [n for n, good in ok if not good]
 print()
 print(f"{len(ok)} checks, {len(failed)} failed")

@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -92,7 +93,8 @@ _TURN_RE = re.compile(
 # opens the next session. That prompt is the note.
 _HANDOFF_SKILL = "hermes-optimize-handoff"
 _HANDOFF_STEPS = (
-    "Hand this work to a fresh session now. Do not start or continue any other work.\n"
+    "Do not start new work. First finish the work in hand, if it can finish without his answer: "
+    "complete it, then commit and push what it changed.\n"
     f"Load the skill `{_HANDOFF_SKILL}` and follow its Procedure: put the lasting results in their "
     "homes, write the hand-off from its template, and run its `check` until it exits 0. "
     "The note is the `prompt` the check printed, exactly as printed.\n"
@@ -100,14 +102,24 @@ _HANDOFF_STEPS = (
 
 _AUTO_TRIGGER_TEXT = (
     "[service: automatic context relay] This chat's context is about {pct:.0f}% full.\n"
+    "Request token: {token}. Finish the work in hand first. If you need the user's answer, reply "
+    "with exactly `Session Relay {token} not yet: <what needed>`; if no hand-off is possible, "
+    "reply exactly `Session Relay {token} no hand-off: <reason>`. Otherwise follow the hand-off "
+    "steps below, store the note, then reply with `Session Relay {token} hand-off` as the first "
+    "line followed by the exact seed prompt, with no preamble or markdown emphasis. "
+    "For not-yet or no-hand-off, return only that one line and do not store a note.\n"
     + _HANDOFF_STEPS
-    + "Store the note with the `session_relay_handoff` tool (text=<the note>) and then reply to the "
-    "user, in the language of this conversation, with exactly one short line: "
-    "\"⚡ Context is almost full — hand-off saved, continuing in a fresh session.\""
+    + "Store the note with the `session_relay_handoff` tool (text=<the note>). Your final reply "
+    "must start with `Session Relay {token} hand-off` on its own first line, followed by the exact "
+    "seed prompt; use the not-yet or no-hand-off form above when applicable."
 )
 
 _AUTO_WEB_TRIGGER_TEXT = (
     "[service: automatic context relay] This web session's context is about {pct:.0f}% full.\n"
+    "Request token: {token}. Finish the work in hand first. If you need the user's answer, reply "
+    "with exactly `Session Relay {token} not yet: <what needed>`; if no hand-off is possible, "
+    "reply exactly `Session Relay {token} no hand-off: <reason>`. Otherwise follow the hand-off "
+    "steps below and put the seed prompt after `Session Relay {token} hand-off` in the block.\n"
     + _HANDOFF_STEPS
     + "Put the note in your answer as ONE fenced block that opens with ```relay-web-auto and closes "
     "with ``` — nothing else inside the block, and nothing but the block in the answer.\n"
@@ -554,7 +566,8 @@ def _schedule_reset(runner, entry) -> bool:
 def _inject_trigger(ctx, route: str, pct: float) -> bool:
     """Ask the agent to write the hand-off now; the note lands in this chat's file."""
     try:
-        return bool(ctx.inject_message(_AUTO_TRIGGER_TEXT.format(pct=pct), role="user", session_key=route))
+        text = _AUTO_TRIGGER_TEXT.format(pct=pct, token=secrets.token_hex(3))
+        return bool(ctx.inject_message(text, role="user", session_key=route))
     except Exception:
         logger.warning("[session-relay] auto trigger injection failed", exc_info=True)
         return False
@@ -600,7 +613,7 @@ def _trigger_web_turn(runner, session_id: str, pct: float) -> bool:
     loop = getattr(runner, "_gateway_loop", None)
     if loop is None or loop.is_closed():
         return False
-    text = _AUTO_WEB_TRIGGER_TEXT.format(pct=pct)
+    text = _AUTO_WEB_TRIGGER_TEXT.format(pct=pct, token=secrets.token_hex(3))
     profile = _profile_for_session(session_id)
 
     async def _run() -> None:
@@ -685,6 +698,9 @@ def _auto_tick(ctx) -> None:
             state.pop(sid, None)
             changed = True
             continue
+        # A live turn can still be preparing the note even after the nominal deadline.
+        if route in running:
+            continue
         if now - float(stage.get("ts") or 0) > _AUTO_TRIGGER_TIMEOUT_S:
             logger.info("[session-relay] auto relay for %s timed out: no hand-off was written", sid)
             _remove_pending(sid)
@@ -692,7 +708,10 @@ def _auto_tick(ctx) -> None:
             changed = True
             continue
         note_path = _pending_path(sid)
-        if route in running or not note_path.is_file():
+        if not note_path.is_file():
+            continue
+        # Existence alone is insufficient: reset only if the carry hook would accept this note.
+        if not _read_pending(sid):
             continue
         try:
             note_ts = note_path.stat().st_mtime
