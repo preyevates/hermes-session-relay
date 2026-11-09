@@ -35,8 +35,10 @@ const ID = 'session-relay'
 const TITLE_LIMIT = 40
 const DEFAULTS = { auto: true, threshold: 45 }
 // Finishing the work in hand, writing the hand-off and passing its check takes tool calls.
-// When this passes, the chip warns once; a reply that still arrives is used.
+// When this passes, a turn still running is warned about and checked again; a stopped one is released.
 const NOTE_TIMEOUT_MS = 1800000
+// How often a long-running hand-off turn is checked again after that.
+const RECHECK_MS = 300000
 // The agent's reply when it could not produce a hand-off: shown, never seeded.
 const NO_HANDOFF = 'Session Relay: no hand-off'
 // The agent's reply when the work in hand cannot finish without his answer: the
@@ -312,10 +314,9 @@ export default {
         })
         return
       }
-      const profileAtom = host.state.focusedSessionProfile
-      const profile = profileAtom && profileAtom.get ? profileAtom.get() : ''
       try {
-        host.newChat(profile || null)
+        // The asking chat's profile, captured with the request: he may have switched since.
+        host.newChat(a.profile || null)
         // Marked only now, once the new chat has opened: a cancelled request leaves the chat unmarked.
         markRelayed(a.storedId)
       } catch (e) {
@@ -378,6 +379,11 @@ export default {
         }
         return
       }
+      // The not-yet reply's own completion schedules this check; it is skipped whatever else is
+      // happening, so a quick answer from him cannot be the turn that gets skipped instead.
+      if (!manual && deferred.delete(storedId)) {
+        return
+      }
       if (awaiting) {
         if (manual) {
           host.notify({ kind: 'warning', message: 'Session relay: a hand-off is already being prepared.' })
@@ -393,9 +399,6 @@ export default {
       const p = prefs.get()
       if (!manual) {
         if (!p.auto) {
-          return
-        }
-        if (deferred.delete(storedId)) {
           return
         }
         if (readRelayed()[storedId]) {
@@ -450,7 +453,9 @@ export default {
         const newTitle = nextTitle(oldTitle)
         const msg = handoffRequest(pct)
 
-        awaiting = { runtimeId, storedId, newTitle }
+        const profileAtom = host.state.focusedSessionProfile
+        const profile = (profileAtom && profileAtom.get ? profileAtom.get() : '') || ''
+        awaiting = { runtimeId, storedId, newTitle, profile }
         await host.request('prompt.submit', { session_id: runtimeId, text: msg, display_kind: 'hidden' })
         console.log('[session-relay] relay started; new title=' + (newTitle || '(auto)'))
         $relay.set({ phase: 'started', title: newTitle })
@@ -458,13 +463,21 @@ export default {
           kind: 'info',
           message: newTitle ? 'Session relay: writing the hand-off for "' + newTitle + '"…' : 'Session relay: writing the hand-off…'
         })
-        // A note that never arrives must not leave the chip spinning forever.
-        ctx.setTimeout(() => {
-          // Warn only: the turn may still be finishing the work, and its reply is still used.
-          if (awaiting && awaiting.storedId === storedId) {
-            host.notify({ kind: 'warning', message: 'Session relay: the hand-off is taking long; it opens when the reply arrives.' })
+        // A note that never arrives must not hold the relay forever. While the turn still runs it
+        // may be finishing the work, so it is left to finish and checked again; once it has
+        // stopped with no reply, the wait is released.
+        const watch = () => {
+          if (!awaiting || awaiting.storedId !== storedId) {
+            return
           }
-        }, NOTE_TIMEOUT_MS)
+          if (isBusy(runtimeId)) {
+            host.notify({ kind: 'warning', message: 'Session relay: the hand-off is taking long; it opens when the reply arrives.' })
+            ctx.setTimeout(watch, RECHECK_MS)
+            return
+          }
+          endWait(storedId, 'warning', 'Session relay: no hand-off arrived — press ⚡ to retry.')
+        }
+        ctx.setTimeout(watch, NOTE_TIMEOUT_MS)
       } catch (e) {
         awaiting = null
         lastFailAt = Date.now()

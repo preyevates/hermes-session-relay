@@ -120,7 +120,7 @@ check('a chat is marked relayed only once its new chat has opened, never when th
   const nextLines = source.slice(submit, source.indexOf('\n', source.indexOf('\n', submit) + 1))
   assert.ok(!nextLines.includes('markRelayed'))
   assert.equal(source.split('markRelayed(').length - 1, 1) // one call (defined as `markRelayed = id =>`)
-  const open = source.indexOf('host.newChat(profile || null)')
+  const open = source.indexOf('host.newChat(a.profile || null)')
   assert.ok(source.slice(open, open + 200).includes('markRelayed(a.storedId)'))
 })
 
@@ -145,14 +145,14 @@ check('a "not yet" reply defers: no chat, no pause, asked again after his next r
   const branch = source.slice(d, source.indexOf("outcome.kind === 'refused'", d))
   assert.ok(branch.includes('deferred.add(a.storedId)'))
   assert.ok(!branch.includes('endWait') && !branch.includes('cancelledAt') && !branch.includes('openAndSeed'))
-  assert.ok(source.includes('if (deferred.delete(storedId)) {'))
+  assert.ok(source.includes('if (!manual && deferred.delete(storedId)) {'))
 })
 
-check('a slow hand-off only warns; its reply still opens the chat', () => {
-  const t = source.indexOf('}, NOTE_TIMEOUT_MS)')
-  const body = source.slice(source.lastIndexOf('ctx.setTimeout(() => {', t), t)
-  assert.ok(!body.includes('endWait'))
+check('Reset marks also clears a deferral and a stuck wait', () => {
   assert.ok(source.includes('deferred.clear()'))
+  const reset = source.indexOf("ctx.storage.remove('relayed')")
+  assert.ok(source.slice(reset, reset + 300).includes('awaiting = null'))
 })
+// Timeouts, deferrals and profiles are proven by events in desktop_relay_events.mjs.
 
 console.log(`\n${passed} checks, 0 failures`)
