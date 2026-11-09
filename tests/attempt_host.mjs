@@ -107,7 +107,13 @@ export function rig({
           session_id: p.session_id,
           session_key: s.stored,
           messages: s.messages.filter((m) => m.display_kind !== 'hidden'),
-          running: s.running
+          running: s.running,
+          info: s.info || {
+            model: 'chat-model',
+            provider: 'chat-provider',
+            reasoning_effort: 'high',
+            service_tier: ''
+          }
         }
       }
       if (method === 'session.list') return { sessions: [] }

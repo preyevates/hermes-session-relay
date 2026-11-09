@@ -57,6 +57,18 @@ function unfence(reply) {
   const m = t.match(/^```[^\n]*\n([\s\S]*?)\n```$/)
   return m ? m[1] : t
 }
+// The asking chat's model, provider, reasoning and service tier, as session.create takes them.
+function chatRuntime(info) {
+  const i = info || {}
+  const model = typeof i.model === 'string' ? i.model.trim() : ''
+  if (!model) return null
+  const out = { model }
+  if (typeof i.provider === 'string' && i.provider.trim()) out.provider = i.provider.trim()
+  if (typeof i.reasoning_effort === 'string' && i.reasoning_effort)
+    out.reasoning_effort = i.reasoning_effort
+  if (typeof i.service_tier === 'string') out.service_tier = i.service_tier
+  return out
+}
 function noteOutcome(payload, token) {
   const p = payload || {}
   if (p.status !== 'complete') return { kind: 'cancelled' }
@@ -348,6 +360,8 @@ export default {
           end(a)
           return
         }
+        // The successor runs on the asking chat's model, not the profile default.
+        a.runtime = chatRuntime(admission.info)
         a.phase = 'submitting'
         a.submittedAt = Date.now()
         a.deadline = a.submittedAt + NOTE_TIMEOUT_MS
@@ -396,6 +410,7 @@ export default {
           source: 'desktop',
           hidden: false,
           follow_profile_config: true,
+          ...(a.runtime || {}),
           ...(a.cwd ? { cwd: a.cwd, cwd_explicit: true } : {}),
           idempotency_key: 'session-relay:' + a.id
         })

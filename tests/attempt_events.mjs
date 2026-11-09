@@ -56,6 +56,17 @@ await test('R5/8 exact envelope seeds prompt only, into exact captured-owner suc
   assert.equal(r.log.opens[0].id, r.log.creates[0].stored)
   assert.equal(r.log.composed.length, 0)
 })
+await test('successor runs on the asking chat model, not the profile default', async () => {
+  const r = rig()
+  await r.human()
+  await r.reply('Session Relay <token> hand-off\nOnly this prompt')
+  const p = r.log.creates[0].p
+  assert.equal(p.model, 'chat-model')
+  assert.equal(p.provider, 'chat-provider')
+  assert.equal(p.reasoning_effort, 'high')
+  assert.equal(p.service_tier, '')
+  assert.equal(p.follow_profile_config, true)
+})
 await test('R12/F6 reload reconciles already arrived reply exactly once without resubmission', async () => {
   const r = rig()
   await r.human()
@@ -161,7 +172,7 @@ await test('R12 unloaded async admission cannot submit or overwrite successor in
   assert.equal(r2.log.submits.length, 0)
   assert.equal(Object.keys(r2.store.get('attempts')).length, 0)
 })
-await test('R5 first line is exact, not whitespace-normalized; seed body preserved', async () => {
+await test('R5 first line is exact; seed body keeps its indent, trailing whitespace dropped (estate.6)', async () => {
   for (const prefix of [' ', '\n']) {
     const r = rig()
     await r.human()
@@ -171,7 +182,7 @@ await test('R5 first line is exact, not whitespace-normalized; seed body preserv
   const r = rig()
   await r.human()
   await r.reply('Session Relay <token> hand-off\n  Indented prompt  ')
-  assert.equal(r.log.submits[1].text, '  Indented prompt  ')
+  assert.equal(r.log.submits[1].text, '  Indented prompt')
 })
 await test('R3 runtime/stored mismatch or backend busy (even stale renderer) refuses admission', async () => {
   for (const fault of ['identity', 'busy']) {
