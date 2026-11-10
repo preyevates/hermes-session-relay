@@ -14,6 +14,8 @@ await check('asking profile survives later focus switch', async () => {
   r.focus()
   await r.reply('Session Relay <token> hand-off\nMode: build. Take up the work.')
   assert.equal(r.log.opens[0].options.route.profile, 'alpha')
+  // estate.8: the new chat is created in that profile, not in the focused or launch profile.
+  assert.equal(r.log.creates[0].p.profile, 'alpha')
 })
 await check('stopped turn without reply releases and other chat still works', async () => {
   const r = rig()

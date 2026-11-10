@@ -67,6 +67,32 @@ await test('successor runs on the asking chat model, not the profile default', a
   assert.equal(p.service_tier, '')
   assert.equal(p.follow_profile_config, true)
 })
+await test('successor opens in the asking chat profile, not the backend launch profile (estate.8)', async () => {
+  // One backend serving every profile: the route's backend profile differs from its name.
+  const r = rig({
+    owner: { connectionId: 'local', profile: 'frasier' }
+  })
+  r.host.profileRoutes = async () => [
+    { connectionId: 'local', mode: 'local', profile: 'default', targetProfile: 'default' },
+    { connectionId: 'local', mode: 'local', profile: 'frasier', targetProfile: 'backend-frasier' }
+  ]
+  await r.human()
+  r.focus('rB', 'sB', 'default')
+  await r.reply('Session Relay <token> hand-off\nOnly this prompt')
+  assert.equal(r.log.creates.length, 1)
+  assert.equal(r.log.creates[0].p.profile, 'backend-frasier')
+  assert.equal(r.log.requests.find((q) => q.method === 'session.create').owner.profile, 'frasier')
+  assert.equal(r.log.opens[0].options.route.targetProfile, 'backend-frasier')
+})
+await test('legacy profile-string owner names that profile on create (estate.8)', async () => {
+  const r = rig()
+  delete r.host.state.focusedSessionOwner
+  r.host.state.focusedSessionProfile.set('frasier')
+  await r.human()
+  await r.reply('Session Relay <token> hand-off\nLegacy note')
+  assert.equal(r.log.creates[0].p.profile, 'frasier')
+  assert.equal(r.log.opens[0].options.profile, 'frasier')
+})
 await test('R12/F6 reload reconciles already arrived reply exactly once without resubmission', async () => {
   const r = rig()
   await r.human()

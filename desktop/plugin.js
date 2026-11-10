@@ -92,6 +92,12 @@ function noteOutcome(payload, token) {
     return { kind: 'refused' }
   return { kind: 'invalid' }
 }
+// The asking chat's backend profile, as Desktop's own New Chat sends it: one backend can
+// serve every profile, and a create without `profile` lands in the launch (default) profile.
+function routeProfile(route) {
+  const p = typeof route === 'string' ? route : route?.targetProfile || route?.profile
+  return typeof p === 'string' && p.trim() ? p.trim() : null
+}
 const readAtom = (name, fallback = null) => host.state[name]?.get?.() ?? fallback
 const ownerKey = (owner) =>
   typeof owner === 'string' ? ['profile', owner] : [owner.connectionId, owner.profile]
@@ -406,10 +412,14 @@ export default {
       persist()
       cancelTimer(a)
       try {
+        const profile = routeProfile(a.route || a.owner)
+        if (!profile) throw Error('The asking chat has no profile to open the new chat in.')
         const child = await rpc(a, 'session.create', {
           source: 'desktop',
           hidden: false,
           follow_profile_config: true,
+          // The successor opens in the asking chat's profile, not the backend's launch profile.
+          profile,
           ...(a.runtime || {}),
           ...(a.cwd ? { cwd: a.cwd, cwd_explicit: true } : {}),
           idempotency_key: 'session-relay:' + a.id
