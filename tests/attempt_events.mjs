@@ -240,7 +240,7 @@ await test('R2 chip stays a gauge while an attempt waits', async () => {
   const r = rig()
   await r.human()
   const spans = r.render().props.children.props.children
-  assert.equal(spans[1].props.children, '50%')
+  assert.equal(spans[1].props.children, '90%')
 })
 console.log(`${passed} passed, ${failed} failed`)
 process.exitCode = failed ? 1 : 0

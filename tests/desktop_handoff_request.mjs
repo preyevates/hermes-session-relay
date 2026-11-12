@@ -10,7 +10,7 @@ async function check(name, fn) {
 await check('request names skill, check, prompt, percentage', async () => {
   const r = rig()
   await r.human()
-  for (const s of ['hermes-optimize-handoff', 'check', '`prompt`', '50%'])
+  for (const s of ['hermes-optimize-handoff', 'check', '`prompt`', '90%'])
     assert.ok(r.log.submits[0].text.includes(s))
 })
 await check('tools allowed; finish then commit/push then skill', async () => {

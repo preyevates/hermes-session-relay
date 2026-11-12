@@ -18,7 +18,7 @@ const atom = (v) => ({
   }
 })
 export function rig({
-  pct = 50,
+  pct = 90,
   store = new Map(),
   backend = null,
   owner = { connectionId: 'local', mode: 'local', profile: 'alpha', targetProfile: 'alpha' }

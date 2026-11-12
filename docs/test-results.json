@@ -64,10 +64,10 @@
       "suite": "required_behaviour.mjs",
       "exit_code": 0,
       "counts": [
-        23,
+        25,
         0
       ],
-      "output": "PASS R2 failed/interrupted/missing-status events never start\nPASS R2 automatic starts at precise threshold, not stale cheap gauge\nPASS R2 manual works below threshold\nPASS R4 wrong or missing chat id cannot supply note\nPASS R4 mismatched human receipt cannot supply note\nPASS R4 no receipt fallback handles first non-human completion only\nPASS R4 fallback never consumes later human-originated completion\nPASS R5 fail closed Session Relay wrong hand-off\nWrong token\nPASS R5 fail closed **Session Relay <token> hand-off**\nBold\nPASS R5 fail closed Explanation\nSession Relay <token> hand-off\nPrompt\nPASS R5 fail closed Session Relay <token> hand-off\nPASS R5 fail closed Session Relay <token> not yet:\nPASS R5 fail closed Session Relay <token> no hand-off:\nPASS R5 allows one whole-reply fence; seeds no first protocol line\nPASS R6 only next human turn re-arms deferral; no warning/pause\nPASS R7 failed hidden admission pauses only its chat\nPASS R8 duplicate completion creates exactly one successor\nPASS R8 open failure retains mark and identifies existing successor\nPASS R10 at 30 minutes running warns then checks at 5 minute cadence\nPASS R10 stopped without text releases, does not time out newer attempt\nPASS R11 reset clears timers, attempts, marks and pauses\nPASS R12 reload after confirmed seed never resends or creates again\nPASS R1 unresolved modern owner fails closed; legacy profile-only still supported\n23 passed, 0 failed\n"
+      "output": "PASS R2 failed/interrupted/missing-status events never start\nPASS R2 automatic starts at precise threshold, not stale cheap gauge\nPASS R2 automatic waits for 85% by default (estate.9)\nPASS R2 a saved threshold the control no longer offers falls back to 85% (estate.9)\nPASS R2 manual works below threshold\nPASS R4 wrong or missing chat id cannot supply note\nPASS R4 mismatched human receipt cannot supply note\nPASS R4 no receipt fallback handles first non-human completion only\nPASS R4 fallback never consumes later human-originated completion\nPASS R5 fail closed Session Relay wrong hand-off\nWrong token\nPASS R5 fail closed **Session Relay <token> hand-off**\nBold\nPASS R5 fail closed Explanation\nSession Relay <token> hand-off\nPrompt\nPASS R5 fail closed Session Relay <token> hand-off\nPASS R5 fail closed Session Relay <token> not yet:\nPASS R5 fail closed Session Relay <token> no hand-off:\nPASS R5 allows one whole-reply fence; seeds no first protocol line\nPASS R6 only next human turn re-arms deferral; no warning/pause\nPASS R7 failed hidden admission pauses only its chat\nPASS R8 duplicate completion creates exactly one successor\nPASS R8 open failure retains mark and identifies existing successor\nPASS R10 at 30 minutes running warns then checks at 5 minute cadence\nPASS R10 stopped without text releases, does not time out newer attempt\nPASS R11 reset clears timers, attempts, marks and pauses\nPASS R12 reload after confirmed seed never resends or creates again\nPASS R1 unresolved modern owner fails closed; legacy profile-only still supported\n25 passed, 0 failed\n"
     },
     {
       "suite": "test_auto_handoff.py",
@@ -97,7 +97,7 @@
       "output": "PASS G2 active turn retains pending note and trigger state\nPASS G3 unreadable note cannot authorize reset\nKNOWN G4 (documented, not fixed): carry consumed before authorization\nKNOWN G5 (documented, not fixed): isolated host cannot resolve carry\n4 checks, 0 failed (2 fixes and 2 documented limitations); temporary data removed\n"
     }
   ],
-  "baseline_commit": "89c0256fe840f4b55fd3fea6c22fad6e8165a16f",
+  "baseline_commit": "b7da35ac16746e0d25c572f9823d5b8d94665cd0",
   "baseline": [
     {
       "suite": "astra_adversarial.mjs",
@@ -110,12 +110,12 @@
     },
     {
       "suite": "attempt_events.mjs",
-      "exit_code": 1,
+      "exit_code": 0,
       "counts": [
-        16,
-        2
+        18,
+        0
       ],
-      "output": "PASS R2/F8 focus, effects and gauge poll never submit; human completion does\nPASS R1/3/11/D2/D3/D8 capture owner and cancel async admission on busy/reset\nPASS R5/8 exact envelope seeds prompt only, into exact captured-owner successor\nPASS successor runs on the asking chat model, not the profile default\nFAIL successor opens in the asking chat profile, not the backend launch profile (estate.8): Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'backend-frasier'\n\nFAIL legacy profile-string owner names that profile on create (estate.8): Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'frasier'\n\nPASS R12/F6 reload reconciles already arrived reply exactly once without resubmission\nPASS R12 backend restart remaps exact stored id, waits for same submitted row\nPASS R13 missing skill skips automatic request, informs once; manual still works\nPASS R8 retained note has a working Copy saved note action\nPASS R12 live backend restart without plugin reload matches stored id\nPASS R2 background completion uses previously observed owner, not current focus\nPASS R8 legacy profile route opens by profile option\nPASS R12 unloaded async admission cannot submit or overwrite successor instance\nPASS R5 first line is exact; seed body keeps its indent, trailing whitespace dropped (estate.6)\nPASS R3 runtime/stored mismatch or backend busy (even stale renderer) refuses admission\nPASS R3 final gateway idle snapshot rejects backend turn started during title await\nPASS R2 chip stays a gauge while an attempt waits\n16 passed, 2 failed\n"
+      "output": "PASS R2/F8 focus, effects and gauge poll never submit; human completion does\nPASS R1/3/11/D2/D3/D8 capture owner and cancel async admission on busy/reset\nPASS R5/8 exact envelope seeds prompt only, into exact captured-owner successor\nPASS successor runs on the asking chat model, not the profile default\nPASS successor opens in the asking chat profile, not the backend launch profile (estate.8)\nPASS legacy profile-string owner names that profile on create (estate.8)\nPASS R12/F6 reload reconciles already arrived reply exactly once without resubmission\nPASS R12 backend restart remaps exact stored id, waits for same submitted row\nPASS R13 missing skill skips automatic request, informs once; manual still works\nPASS R8 retained note has a working Copy saved note action\nPASS R12 live backend restart without plugin reload matches stored id\nPASS R2 background completion uses previously observed owner, not current focus\nPASS R8 legacy profile route opens by profile option\nPASS R12 unloaded async admission cannot submit or overwrite successor instance\nPASS R5 first line is exact; seed body keeps its indent, trailing whitespace dropped (estate.6)\nPASS R3 runtime/stored mismatch or backend busy (even stale renderer) refuses admission\nPASS R3 final gateway idle snapshot rejects backend turn started during title await\nPASS R2 chip stays a gauge while an attempt waits\n18 passed, 0 failed\n"
     },
     {
       "suite": "attempt_host.mjs",
@@ -143,9 +143,12 @@
     },
     {
       "suite": "desktop_relay_events.mjs",
-      "exit_code": 1,
-      "counts": null,
-      "output": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'alpha'\n\n    at file://<repo>/tests/desktop_relay_events.mjs:18:10\n    at async check (file://<repo>/tests/desktop_relay_events.mjs:6:3)\n    at async file://<repo>/tests/desktop_relay_events.mjs:11:1 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: 'alpha',\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n\nNode.js v26.8.1\n"
+      "exit_code": 0,
+      "counts": [
+        8,
+        0
+      ],
+      "output": "PASS asking profile survives later focus switch\nPASS stopped turn without reply releases and other chat still works\nPASS running past timeout stays eligible for late note\nPASS not yet opens nothing, warns nothing, no own-completion loop\nPASS next human reply after not yet brings request back\nPASS quick human answer is not skipped by old deferral check\nPASS refusal/cancel pause automatic relay for 15 minutes\nPASS another chat reply is never the note\n8 passed, 0 failed\n"
     },
     {
       "suite": "relay_adversarial.mjs",
@@ -158,12 +161,12 @@
     },
     {
       "suite": "required_behaviour.mjs",
-      "exit_code": 0,
+      "exit_code": 1,
       "counts": [
         23,
-        0
+        2
       ],
-      "output": "PASS R2 failed/interrupted/missing-status events never start\nPASS R2 automatic starts at precise threshold, not stale cheap gauge\nPASS R2 manual works below threshold\nPASS R4 wrong or missing chat id cannot supply note\nPASS R4 mismatched human receipt cannot supply note\nPASS R4 no receipt fallback handles first non-human completion only\nPASS R4 fallback never consumes later human-originated completion\nPASS R5 fail closed Session Relay wrong hand-off\nWrong token\nPASS R5 fail closed **Session Relay <token> hand-off**\nBold\nPASS R5 fail closed Explanation\nSession Relay <token> hand-off\nPrompt\nPASS R5 fail closed Session Relay <token> hand-off\nPASS R5 fail closed Session Relay <token> not yet:\nPASS R5 fail closed Session Relay <token> no hand-off:\nPASS R5 allows one whole-reply fence; seeds no first protocol line\nPASS R6 only next human turn re-arms deferral; no warning/pause\nPASS R7 failed hidden admission pauses only its chat\nPASS R8 duplicate completion creates exactly one successor\nPASS R8 open failure retains mark and identifies existing successor\nPASS R10 at 30 minutes running warns then checks at 5 minute cadence\nPASS R10 stopped without text releases, does not time out newer attempt\nPASS R11 reset clears timers, attempts, marks and pauses\nPASS R12 reload after confirmed seed never resends or creates again\nPASS R1 unresolved modern owner fails closed; legacy profile-only still supported\n23 passed, 0 failed\n"
+      "output": "PASS R2 failed/interrupted/missing-status events never start\nPASS R2 automatic starts at precise threshold, not stale cheap gauge\nFAIL R2 automatic waits for 85% by default (estate.9): Expected values to be strictly equal:\n\n1 !== 0\n\nFAIL R2 a saved threshold the control no longer offers falls back to 85% (estate.9): Expected values to be strictly equal:\n\n1 !== 0\n\nPASS R2 manual works below threshold\nPASS R4 wrong or missing chat id cannot supply note\nPASS R4 mismatched human receipt cannot supply note\nPASS R4 no receipt fallback handles first non-human completion only\nPASS R4 fallback never consumes later human-originated completion\nPASS R5 fail closed Session Relay wrong hand-off\nWrong token\nPASS R5 fail closed **Session Relay <token> hand-off**\nBold\nPASS R5 fail closed Explanation\nSession Relay <token> hand-off\nPrompt\nPASS R5 fail closed Session Relay <token> hand-off\nPASS R5 fail closed Session Relay <token> not yet:\nPASS R5 fail closed Session Relay <token> no hand-off:\nPASS R5 allows one whole-reply fence; seeds no first protocol line\nPASS R6 only next human turn re-arms deferral; no warning/pause\nPASS R7 failed hidden admission pauses only its chat\nPASS R8 duplicate completion creates exactly one successor\nPASS R8 open failure retains mark and identifies existing successor\nPASS R10 at 30 minutes running warns then checks at 5 minute cadence\nPASS R10 stopped without text releases, does not time out newer attempt\nPASS R11 reset clears timers, attempts, marks and pauses\nPASS R12 reload after confirmed seed never resends or creates again\nPASS R1 unresolved modern owner fails closed; legacy profile-only still supported\n23 passed, 2 failed\n"
     },
     {
       "suite": "test_auto_handoff.py",

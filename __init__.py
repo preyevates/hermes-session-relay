@@ -68,7 +68,7 @@ _CARRY_HEADER = "⚡ Hand-off from the previous session (auto-relay)."
 # plugins.entries.session-relay.settings.<key> on each tick, so `hermes config set` is a live switch.
 _AUTO_DEFAULTS = {
     "auto_handoff": False,
-    "auto_threshold_percent": 45.0,
+    "auto_threshold_percent": 85.0,
     "auto_min_idle_seconds": 60.0,
     "auto_poll_seconds": 60.0,
     "auto_channels": ["telegram"],

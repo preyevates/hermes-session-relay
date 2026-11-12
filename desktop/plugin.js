@@ -17,7 +17,8 @@ import { useEffect } from 'react'
 
 const ID = 'session-relay'
 const TITLE_LIMIT = 40
-const DEFAULTS = { auto: true, threshold: 45 }
+const THRESHOLDS = [70, 80, 85, 90]
+const DEFAULTS = { auto: true, threshold: 85 }
 const NOTE_TIMEOUT_MS = 1800000
 const RECHECK_MS = 300000
 const CANCEL_COOLDOWN_MS = 900000
@@ -107,7 +108,10 @@ export default {
   id: ID,
   name: 'Session Relay',
   register(ctx) {
-    const prefs = atom({ ...DEFAULTS, ...ctx.storage.get('prefs', {}) })
+    const storedPrefs = { ...ctx.storage.get('prefs', {}) }
+    // A threshold the control no longer offers (the old 30–50% choices) falls back to the default.
+    if (!THRESHOLDS.includes(storedPrefs.threshold)) delete storedPrefs.threshold
+    const prefs = atom({ ...DEFAULTS, ...storedPrefs })
     const $relay = atom({ phase: 'idle', title: '' })
     const $pct = atom(null)
     let generation = ctx.storage.get('attemptGeneration', 0)
@@ -763,16 +767,11 @@ export default {
           jsx(ListRow, {
             title: 'Trigger threshold',
             description:
-              'Hermes compacts the history at about 50%; the threshold is kept below that so the relay fires before compaction.',
+              'Keep it below Hermes\'s own compaction point (compression.threshold) so the relay fires before compaction.',
             action: jsx(SegmentedControl, {
               value: String(p.threshold),
               onChange: (v) => update({ threshold: Number(v) }),
-              options: [
-                { id: '30', label: '30%' },
-                { id: '40', label: '40%' },
-                { id: '45', label: '45%' },
-                { id: '50', label: '50%' }
-              ]
+              options: THRESHOLDS.map((n) => ({ id: String(n), label: n + '%' }))
             })
           }),
           jsx(ListRow, {

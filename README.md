@@ -4,16 +4,16 @@
 
 **Hand your long-running chat over to a fresh session before the context window fills up.**
 
-> **Fork note (`estate/handoff-skill`, estate.8).** Desktop tracks persisted, owner-qualified attempts, not the focused chat: only a completed human turn above the threshold (or ⚡ at any level) asks once. The agent finishes existing work, runs `hermes-optimize-handoff`'s check, and replies with exactly `Session Relay <token> hand-off` plus the check's prompt, `Session Relay <token> not yet: <what is needed>`, or `Session Relay <token> no hand-off: <reason>`; one whole-reply code fence is allowed. Anything else opens nothing. Not-yet waits silently for the next human completion; refusal, cancellation and failure pause that chat for 15 minutes. The successor is created and seeded through its captured owner, confirmed by exact durable first-message identity, then marked, titled and opened; no composer/draft or recent-row fallback is used. Attempts and pauses survive reloads, Reset invalidates in-flight work, and missing skills skip automatic requests. The successor opens in the asking chat's profile (its create request names the profile, as Desktop's own New Chat does, so a backend serving several profiles cannot open it in the default one), in its workspace and on its model, provider, reasoning and service tier, not the profile default, and is titled through its runtime id; leading blank lines and trailing whitespace in the reply are ignored. Accepted limit: Hermes Desktop gives plugins no atomic check-idle-and-submit, so a request can still collide with work started in the same chat from another window at the same instant. See [host contract and limits](docs/host-contract.md). Upstream: [ikuro4kin-dev/hermes-session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay).
+> **Fork note (`estate/handoff-skill`, estate.9).** The automatic threshold defaults to 85% (choices 70/80/85/90; a saved older choice falls back to 85%), for a host that compacts later, such as `compression.threshold: 0.95`. Desktop tracks persisted, owner-qualified attempts, not the focused chat: only a completed human turn above the threshold (or ⚡ at any level) asks once. The agent finishes existing work, runs `hermes-optimize-handoff`'s check, and replies with exactly `Session Relay <token> hand-off` plus the check's prompt, `Session Relay <token> not yet: <what is needed>`, or `Session Relay <token> no hand-off: <reason>`; one whole-reply code fence is allowed. Anything else opens nothing. Not-yet waits silently for the next human completion; refusal, cancellation and failure pause that chat for 15 minutes. The successor is created and seeded through its captured owner, confirmed by exact durable first-message identity, then marked, titled and opened; no composer/draft or recent-row fallback is used. Attempts and pauses survive reloads, Reset invalidates in-flight work, and missing skills skip automatic requests. The successor opens in the asking chat's profile (its create request names the profile, as Desktop's own New Chat does, so a backend serving several profiles cannot open it in the default one), in its workspace and on its model, provider, reasoning and service tier, not the profile default, and is titled through its runtime id; leading blank lines and trailing whitespace in the reply are ignored. Accepted limit: Hermes Desktop gives plugins no atomic check-idle-and-submit, so a request can still collide with work started in the same chat from another window at the same instant. See [host contract and limits](docs/host-contract.md). Upstream: [ikuro4kin-dev/hermes-session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay).
 >
 > **Gateway limits (watchdog off by default).** G2/G3 are fixed: an active turn keeps its note past the nominal deadline, and an invalid note cannot authorize reset. G1 remains: opt-in watchdog reset uses a stale idle snapshot and can interrupt new work. G4 remains (Frasier-approved scope): carry is consumed before authorization/durable admission, so shared-thread denial or failed ingress can lose it. G5 remains: `plugins.isolation=host` cannot expose the live runner/store used by gateway carry/watchdog. Do not enable the watchdog for this build or weaken isolation to bypass this limitation. Gateway request wording uses the same finish-first/token protocol, but its legacy tool/carry/web mechanism is not the Desktop attempt engine and has no promise of Desktop deferral/recovery parity.
 
-Hermes compacts a conversation when its context reaches ~50% of the model window. Compaction keeps a summary and drops details; after two or three compactions a long working session turns into a soup of half-remembered facts and duplicated messages. Session Relay solves the same problem the other way round: as the context approaches the threshold, the agent writes a hand-off note and opens a **new chat** that starts with that note — while the old chat stays untouched and readable.
+Hermes compacts a conversation when its context reaches `compression.threshold` of the model window (50% by default). Compaction keeps a summary and drops details; after two or three compactions a long working session turns into a soup of half-remembered facts and duplicated messages. Session Relay solves the same problem the other way round: as the context approaches the threshold, the agent writes a hand-off note and opens a **new chat** that starts with that note — while the old chat stays untouched and readable.
 
 ## How it works
 
 1. The desktop half displays context usage without starting work from the gauge.
-2. After a completed human turn above the threshold (45% by default), it submits one **hidden service message** with a per-attempt token. The reply must follow the fork protocol above.
+2. After a completed human turn above the threshold (85% by default), it submits one **hidden service message** with a per-attempt token. The reply must follow the fork protocol above.
 3. The plugin uses owner-routed `session.create` and `prompt.submit` to seed the exact successor, verifies its durable first user message, then calls `host.openSession` on that exact stored id. It never types into a draft.
 4. Only that successor is titled with the old title's number incremented — `Bugfix-6` → `Bugfix-7`.
 5. A toast announces the new chat or explains where to copy a retained note after a failed confirmation.
@@ -71,7 +71,7 @@ This puts the package in `$HERMES_HOME/plugins/session-relay/`. Then:
 | Setting | Meaning |
 |---|---|
 | **Automatic relay** | Fire the hand-off automatically when the threshold is reached. |
-| **Trigger threshold** | 30 / 40 / 45 / 50 %. The default is 45 % — below the point where Hermes compacts on its own (~50 %). |
+| **Trigger threshold** | 70 / 80 / 85 / 90 %. The default is 85 %; keep it below `compression.threshold`, raised to suit (for example 0.95), so the relay fires before Hermes compacts. A saved choice outside these options falls back to 85 %. |
 | **Reset marks** | Forget that a relay already ran for the current session (useful for testing). |
 
 ## Using the gateway half (Telegram and other channels)
@@ -100,7 +100,7 @@ Settings live under `plugins.entries.session-relay.settings`:
 | Setting | Default | Meaning |
 |---|---|---|
 | `auto_handoff` | `false` | Master switch; read on every tick, so it needs no restart. |
-| `auto_threshold_percent` | `45` | Share of the model's context window that triggers the relay. |
+| `auto_threshold_percent` | `85` | Share of the model's context window that triggers the relay. |
 | `auto_min_idle_seconds` | `60` | The chat must have been quiet for this long. |
 | `auto_poll_seconds` | `60` | Watchdog tick. |
 | `auto_channels` | `["telegram"]` | Platforms to watch (`telegram`, `api_server`, …). |
@@ -109,7 +109,7 @@ Set them with `hermes config set`, for example:
 
 ```
 hermes config set plugins.entries.session-relay.settings.auto_handoff true
-hermes config set plugins.entries.session-relay.settings.auto_threshold_percent 45
+hermes config set plugins.entries.session-relay.settings.auto_threshold_percent 85
 ```
 
 A session is relayed at most once per day: the watchdog remembers the session ids it triggered in `auto_state.json` in the plugin's own data folder, so a gateway restart cannot fire the same relay twice.

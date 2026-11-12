@@ -24,9 +24,26 @@ await test('R2 automatic starts at precise threshold, not stale cheap gauge', as
   const r = rig({ pct: 20 })
   const orig = r.host.request
   r.host.request = (m, p) =>
-    m === 'session.context_breakdown' ? Promise.resolve({ context_percent: 50 }) : orig(m, p)
+    m === 'session.context_breakdown' ? Promise.resolve({ context_percent: 90 }) : orig(m, p)
   await r.human()
   assert.equal(hidden(r).length, 1)
+})
+await test('R2 automatic waits for 85% by default (estate.9)', async () => {
+  const below = rig({ pct: 84 })
+  await below.human()
+  assert.equal(hidden(below).length, 0)
+  const at = rig({ pct: 85 })
+  await at.human()
+  assert.equal(hidden(at).length, 1)
+})
+await test('R2 a saved threshold the control no longer offers falls back to 85% (estate.9)', async () => {
+  const store = new Map([['prefs', { auto: true, threshold: 45 }]])
+  const r = rig({ pct: 60, store })
+  await r.human()
+  assert.equal(hidden(r).length, 0)
+  const kept = rig({ pct: 75, store: new Map([['prefs', { auto: true, threshold: 70 }]]) })
+  await kept.human()
+  assert.equal(hidden(kept).length, 1)
 })
 await test('R2 manual works below threshold', async () => {
   const r = rig({ pct: 5 })

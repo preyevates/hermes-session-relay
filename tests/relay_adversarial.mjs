@@ -73,7 +73,7 @@ await test('F5 failed seed never marks, retains note, explains copy', async () =
   assert.ok(r.log.notes.some((n) => n.message.includes('Copy saved note')))
 })
 await test('F4 two chats can wait concurrently', async () => {
-  const r = rig({ pct: 60 })
+  const r = rig({ pct: 90 })
   await asked(r)
   r.focus()
   await r.human('rB')
@@ -182,7 +182,7 @@ await test('F8 poll with rising context never submits', async () => {
   r.render()
   const orig = r.host.request
   r.host.request = (m, p) =>
-    m === 'session.context_breakdown' ? Promise.resolve({ context_percent: 60 }) : orig(m, p)
+    m === 'session.context_breakdown' ? Promise.resolve({ context_percent: 90 }) : orig(m, p)
   await r.advance(32000)
   r.render()
   await flush()
