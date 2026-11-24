@@ -93,6 +93,46 @@ await test('legacy profile-string owner names that profile on create (estate.8)'
   assert.equal(r.log.creates[0].p.profile, 'frasier')
   assert.equal(r.log.opens[0].options.profile, 'frasier')
 })
+// Desktop's `cwd` is the main pane's workspace, not the asking chat's: with the asking chat in a
+// tile, or the main pane on another project, the successor opened in the wrong project (estate.10).
+const chatInfo = (cwd) => ({
+  model: 'chat-model',
+  provider: 'chat-provider',
+  reasoning_effort: 'high',
+  service_tier: '',
+  ...(cwd === undefined ? {} : { cwd })
+})
+await test('successor opens in the asking chat folder, not the main pane workspace (estate.10)', async () => {
+  const r = rig()
+  r.host.state.cwd = { get: () => '/projects/skill-curator', set: () => {} }
+  r.sessions.get('rA').info = chatInfo('/projects/doctrine-curator')
+  await r.human()
+  await r.reply('Session Relay <token> hand-off\nOnly this prompt')
+  assert.equal(r.log.creates.length, 1)
+  assert.equal(r.log.creates[0].p.cwd, '/projects/doctrine-curator')
+  assert.equal(r.log.creates[0].p.cwd_explicit, true)
+})
+await test('main pane moving during the hand-off does not move the successor (estate.10)', async () => {
+  const r = rig()
+  let paneCwd = '/projects/doctrine-curator'
+  r.host.state.cwd = { get: () => paneCwd, set: () => {} }
+  r.sessions.get('rA').info = chatInfo('/projects/doctrine-curator')
+  await r.human()
+  paneCwd = '/projects/skill-curator'
+  r.focus('rB', 'sB', 'alpha')
+  await r.reply('Session Relay <token> hand-off\nOnly this prompt')
+  assert.equal(r.log.creates[0].p.cwd, '/projects/doctrine-curator')
+})
+await test('asking chat with no folder of its own never takes the main pane folder (estate.10)', async () => {
+  const r = rig()
+  r.host.state.cwd = { get: () => '/projects/skill-curator', set: () => {} }
+  r.sessions.get('rA').info = chatInfo(undefined)
+  await r.human()
+  await r.reply('Session Relay <token> hand-off\nOnly this prompt')
+  assert.equal(r.log.creates.length, 1)
+  assert.equal('cwd' in r.log.creates[0].p, false)
+  assert.equal('cwd_explicit' in r.log.creates[0].p, false)
+})
 await test('R12/F6 reload reconciles already arrived reply exactly once without resubmission', async () => {
   const r = rig()
   await r.human()

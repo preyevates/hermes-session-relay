@@ -70,6 +70,11 @@ function chatRuntime(info) {
   if (typeof i.service_tier === 'string') out.service_tier = i.service_tier
   return out
 }
+// The asking chat's own folder, as session.activate reports it; '' when it reports none.
+function chatFolder(info) {
+  const cwd = info?.cwd
+  return typeof cwd === 'string' ? cwd.trim() : ''
+}
 function noteOutcome(payload, token) {
   const p = payload || {}
   if (p.status !== 'complete') return { kind: 'cancelled' }
@@ -235,7 +240,6 @@ export default {
         runtimeId,
         storedId,
         owner,
-        cwd: String(readAtom('cwd', '') || ''),
         key,
         phase: 'admitting',
         startedAt: Date.now(),
@@ -372,6 +376,10 @@ export default {
         }
         // The successor runs on the asking chat's model, not the profile default.
         a.runtime = chatRuntime(admission.info)
+        // The successor opens in the asking chat's own folder, read from its session record.
+        // Desktop's `cwd` is the main pane's workspace, which differs whenever the asking chat
+        // sits in a tile or he has moved on, so it is never used (estate.10).
+        a.cwd = chatFolder(admission.info)
         a.phase = 'submitting'
         a.submittedAt = Date.now()
         a.deadline = a.submittedAt + NOTE_TIMEOUT_MS
